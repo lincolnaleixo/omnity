@@ -10,23 +10,68 @@ enum ImageViewer {
     static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tif", "tiff", "bmp"]
     static let maxItems = 40
 
-    /// Image paths in terminal text, in order of appearance, without duplicates.
+    /// Image paths and image URLs in terminal text, in order of appearance,
+    /// without duplicates.
     static func imagePaths(in text: String) -> [String] {
-        let pattern = #"(?<![\w/:.~\-])(?:~/|\.{1,2}/|/)?(?:[\w.\-@+]+/)*[\w.\-@+]+\.(?:png|jpe?g|gif|webp|heic|tiff?|bmp)(?![\w])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+        let patterns = [
+            #"(?<![\w/:.~\-])(?:~/|\.{1,2}/|/)?(?:[\w.\-@+]+/)*[\w.\-@+]+\.(?:png|jpe?g|gif|webp|heic|tiff?|bmp)(?![\w])"#,
+            #"https?://[^\s'"<>()\[\]]+"#,
+        ]
         let range = NSRange(text.startIndex..., in: text)
-        var seen = Set<String>()
-        var paths: [String] = []
-        for match in regex.matches(in: text, range: range) {
-            guard let r = Range(match.range, in: text) else { continue }
-            let path = String(text[r])
-            if seen.insert(path).inserted { paths.append(path) }
+        var found: [(Int, String)] = []
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            for match in regex.matches(in: text, range: range) {
+                guard let r = Range(match.range, in: text) else { continue }
+                var item = String(text[r])
+                while let last = item.last, ".,;:!?".contains(last) { item.removeLast() }
+                if isImage(item) { found.append((match.range.location, item)) }
+            }
         }
-        return paths
+
+        var seen = Set<String>()
+        return found.sorted { $0.0 < $1.0 }.map(\.1).filter { seen.insert($0).inserted }
     }
 
-    static func isImage(_ path: String) -> Bool {
-        extensions.contains((path as NSString).pathExtension.lowercased())
+    /// A path to an image file, an http(s) URL to one, or a CleanShot share link.
+    static func isImage(_ item: String) -> Bool {
+        if let url = webURL(item) {
+            return isCleanShot(url) || extensions.contains(url.pathExtension.lowercased())
+        }
+        guard URL(string: item)?.scheme == nil else { return false }
+        return extensions.contains((item as NSString).pathExtension.lowercased())
+    }
+
+    static func webURL(_ item: String) -> URL? {
+        guard let url = URL(string: item), url.scheme == "http" || url.scheme == "https" else { return nil }
+        return url
+    }
+
+    static func isCleanShot(_ url: URL) -> Bool {
+        (url.host?.hasSuffix("cleanshot.com") ?? false) && url.path.hasPrefix("/share/")
+    }
+
+    /// The URL that serves the image itself (CleanShot shares are pages).
+    static func downloadURL(_ url: URL) -> URL {
+        guard isCleanShot(url), url.lastPathComponent != "download" else { return url }
+        return url.appendingPathComponent("download")
+    }
+
+    /// Where an item is read from, for the caption.
+    static func source(of item: String, target: RemoteDrop.Target?) -> String {
+        webURL(item)?.host ?? target?.destination ?? "local"
+    }
+
+    static func download(_ url: URL) async -> Result<NSImage, RemoteDropError> {
+        var request = URLRequest(url: downloadURL(url), timeoutInterval: 30)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let image = NSImage(data: data) { return .success(image) }
+            return .failure(RemoteDropError(message: "Not an image: \(url.absoluteString)"))
+        } catch {
+            return .failure(RemoteDropError(message: error.localizedDescription))
+        }
     }
 
     /// The remote command that prints a file, keeping `~/` expandable.
@@ -38,6 +83,7 @@ enum ImageViewer {
 
     /// Reads an image from disk or, with a target, from the remote host.
     static func load(_ path: String, from target: RemoteDrop.Target?) async -> Result<NSImage, RemoteDropError> {
+        if let url = webURL(path) { return await download(url) }
         guard let target else {
             let expanded = NSString(string: path).standardizingPath
             if let image = NSImage(contentsOfFile: expanded) { return .success(image) }
@@ -94,7 +140,6 @@ final class ImageViewerModel: ObservableObject {
     }
 
     var path: String { paths[index] }
-    var host: String { target?.destination ?? "local" }
 
     func step(_ delta: Int) {
         let next = index + delta
@@ -146,7 +191,7 @@ extension Ghostty.SurfaceView {
 
         var clicked = action.url
         if let url = URL(string: clicked), url.scheme == "file" { clicked = url.path }
-        guard URL(string: clicked)?.scheme == nil, ImageViewer.isImage(clicked) else { return false }
+        guard ImageViewer.isImage(clicked) else { return false }
 
         // Core calls this with the renderer lock held, and reading the
         // screen takes that lock: do the rest once the call has returned.
@@ -256,7 +301,7 @@ private struct ImageViewerContent: View {
         } else if let error = model.errors[model.path] {
             placeholder("exclamationmark.triangle", error)
         } else {
-            placeholder("photo", "Loading from \(model.host)…")
+            placeholder("photo", "Loading from \(ImageViewer.source(of: model.path, target: model.target))…")
         }
     }
 
@@ -279,7 +324,7 @@ private struct ImageViewerContent: View {
                 Text("\(rep.pixelsWide)×\(rep.pixelsHigh)")
             }
             Text("·")
-            Text(model.host)
+            Text(ImageViewer.source(of: model.path, target: model.target))
             if model.paths.count > 1 {
                 Text("·")
                 Text("\(model.index + 1)/\(model.paths.count)")
