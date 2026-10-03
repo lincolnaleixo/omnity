@@ -10,7 +10,7 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   terminal, with a filmstrip of the other image paths on screen; over ssh the
   images are read from the host. Image URLs and CleanShot share links open
   there too. Cmd+click works inside tmux (no shift needed).
-- Display name Omnity, bundle id `com.lincolnaleixo.omnity`, orange icon.
+- Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).
 
 Every change is marked with an `Omnity:` comment.
@@ -20,9 +20,11 @@ Every change is marked with an `Omnity:` comment.
 Build host: robots-mac-server, `~/Developer/omnity`.
 
 1. `git fetch upstream && git merge upstream/main` (fix conflicts; search `Omnity:`).
-2. `zig build -Doptimize=ReleaseFast` (needs Xcode, Metal Toolchain and the Zig in `build.zig.zon`).
+2. `./omnity-build.sh` (zig build, then names and re-signs `zig-out/Omnity.app`; needs Xcode,
+   Metal Toolchain and the Zig in `build.zig.zon`).
 3. Run the parser tests: `cd macos && xcodebuild test -project Ghostty.xcodeproj -scheme Ghostty -only-testing:GhosttyTests/RemoteDropTests SYMROOT=$PWD/build`.
-4. Install on robots-mac-mini as `/Applications/Omnity.app` (copy `zig-out/Ghostty.app`), then quit and reopen it.
+4. Install on robots-mac-mini and robots-macbook as `/Applications/Omnity.app` (copy
+   `zig-out/Omnity.app`), then quit and reopen it.
 5. Manual tests: drop in a local window (local path); drop in `ssh omni` (remote path, pill);
    CleanShot Cmd+V in `ssh omni` (remote path); cmd+click an image path
    and a CleanShot link inside tmux (viewer with filmstrip); drop with the network down (red pill, local path).
