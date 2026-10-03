@@ -185,7 +185,9 @@ extension Ghostty.SurfaceView {
     /// Opens the viewer for an image path. Returns false to let the URL open
     /// the upstream way.
     func openImageViewer(_ action: Ghostty.Action.OpenURL) -> Bool {
-        guard action.kind != .osc8,
+        // OSC 8 targets come from the program, so only take web images from
+        // them (we just download and show those, never open them).
+        guard action.kind != .osc8 || ImageViewer.webURL(action.url) != nil,
               let appDelegate = NSApp.delegate as? AppDelegate,
               appDelegate.ghostty.config.macosImageViewer else { return false }
 
