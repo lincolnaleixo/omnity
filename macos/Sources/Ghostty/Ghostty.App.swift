@@ -750,6 +750,13 @@ extension Ghostty {
                 checkForUpdates(app)
 
             case GHOSTTY_ACTION_OPEN_URL:
+                // Omnity: image paths open in the in-terminal image viewer.
+                if target.tag == GHOSTTY_TARGET_SURFACE,
+                   let surface = target.target.surface,
+                   let view = surfaceView(from: surface),
+                   view.openImageViewer(Ghostty.Action.OpenURL(c: action.action.open_url)) {
+                    return true
+                }
                 return openURL(action.action.open_url)
 
             case GHOSTTY_ACTION_UNDO:

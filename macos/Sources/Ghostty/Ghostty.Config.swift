@@ -460,6 +460,14 @@ extension Ghostty {
             return v
         }
 
+        var macosImageViewer: Bool {
+            guard let config = self.config else { return false }
+            var v = false
+            let key = "macos-image-viewer"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return v
+        }
+
         var macosRemoteDrop: Bool {
             guard let config = self.config else { return false }
             var v = false

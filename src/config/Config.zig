@@ -3548,6 +3548,14 @@ keybind: Keybinds = .{},
 /// The default is false.
 @"macos-remote-drop": bool = false,
 
+/// Omnity: if true, opening an image path (cmd+click) shows it in an
+/// in-terminal viewer with thumbnails of the other image paths on screen,
+/// instead of opening it in the default app. When the foreground process is
+/// `ssh <host>`, the images are read from that host.
+///
+/// The default is false.
+@"macos-image-viewer": bool = false,
+
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application

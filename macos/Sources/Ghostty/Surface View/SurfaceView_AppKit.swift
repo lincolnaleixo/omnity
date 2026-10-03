@@ -1099,6 +1099,9 @@ extension Ghostty {
         }
 
         override func keyDown(with event: NSEvent) {
+            // Omnity: arrows and Esc drive the image viewer while it is open.
+            if handleImageViewerKey(event) { return }
+
             guard let surface = self.surface else {
                 self.interpretKeyEvents([event])
                 return
