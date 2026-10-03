@@ -22,3 +22,8 @@ Build host: robots-mac-server, `~/Developer/omnity`.
 5. Manual tests: drop in a local window (local path); drop in `ssh omni` (remote path, pill);
    CleanShot Cmd+V in `ssh omni` (remote path); drop with the network down (red pill, local path).
 6. `git push origin feat/remote-drop`.
+
+## Not tested yet
+
+- Upload failure (network down or host off): expect a red pill with the error for 5 s,
+  then the local path typed. Untested as of 2026-10-03.
