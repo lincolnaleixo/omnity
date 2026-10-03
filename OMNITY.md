@@ -6,6 +6,9 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   into a surface whose foreground process is `ssh <host>` uploads them to
   `~/uploads` on that host and types the remote paths. A progress pill shows
   in the bottom-right corner.
+- `macos-image-viewer = true`: cmd+click an image path to view it over the
+  terminal, with a filmstrip of the other image paths on screen; over ssh the
+  images are read from the host.
 - Display name Omnity, bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).
 
@@ -27,3 +30,5 @@ Build host: robots-mac-server, `~/Developer/omnity`.
 
 - Upload failure (network down or host off): expect a red pill with the error for 5 s,
   then the local path typed. Untested as of 2026-10-03.
+- Image viewer: built and unit-tested, not yet tried in the app (2026-10-03).
+- Installed on robots-mac-mini and robots-macbook.
