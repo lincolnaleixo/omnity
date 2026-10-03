@@ -2274,10 +2274,13 @@ extension Ghostty.SurfaceView: NSMenuItemValidation {
 // MARK: NSDraggingDestination
 
 extension Ghostty.SurfaceView {
-    static let dropTypes: Set<NSPasteboard.PasteboardType> = [
+    static let dropTypes: Set<NSPasteboard.PasteboardType> = Set<NSPasteboard.PasteboardType>([
         .string,
         .fileURL,
-    ]
+        // Omnity: images and promised files, uploaded by remote drop.
+        .png,
+        .tiff,
+    ]).union(NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         guard let types = sender.draggingPasteboard.types else { return [] }

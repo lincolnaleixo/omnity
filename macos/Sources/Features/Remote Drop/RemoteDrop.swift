@@ -204,7 +204,7 @@ enum RemoteDrop {
         }
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("paste-\(UUID().uuidString.prefix(8)).png")
+            .appendingPathComponent("image-\(UUID().uuidString.prefix(8)).png")
         do {
             try png.write(to: url)
             return url
@@ -228,32 +228,73 @@ extension Ghostty.SurfaceView {
         return RemoteDrop.target(pid: pid)
     }
 
-    /// Uploads dropped files if this surface is remote. Returns false when the
-    /// drop should be handled the upstream way.
+    /// Uploads dropped files, promised files (Photos, Mail) or image data
+    /// (browsers) if this surface is remote. Returns false when the drop
+    /// should be handled the upstream way.
     func remoteDrop(_ pasteboard: NSPasteboard) -> Bool {
-        guard let urls = pasteboard.readObjects(
-                forClasses: [NSURL.self],
-                options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              !urls.isEmpty,
-              let target = remoteDropTarget else { return false }
-
-        let fallback = pasteboard.getOpinionatedStringContents()
-        remoteUpload(urls, to: target, fallback: fallback)
-        return true
+        guard let target = remoteDropTarget else { return false }
+        return remoteUploadFiles(pasteboard, to: target)
+            || remoteUploadPromises(pasteboard, to: target)
+            || remoteUploadImage(pasteboard, to: target)
     }
 
     /// Uploads pasted files (e.g. a CleanShot or Finder copy), or a pasted
     /// image when there is no text, if this surface is remote. Returns true
     /// if it took the paste.
     func remotePaste(_ pasteboard: NSPasteboard) -> Bool {
-        if remoteDrop(pasteboard) { return true }
+        guard let target = remoteDropTarget else { return false }
+        if remoteUploadFiles(pasteboard, to: target) { return true }
+        return pasteboard.string(forType: .string) == nil
+            && remoteUploadImage(pasteboard, to: target)
+    }
 
-        guard pasteboard.string(forType: .string) == nil,
-              let target = remoteDropTarget,
-              let file = RemoteDrop.imageFile(from: pasteboard) else { return false }
+    private func remoteUploadFiles(_ pasteboard: NSPasteboard, to target: RemoteDrop.Target) -> Bool {
+        guard let urls = pasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+
+        remoteUpload(urls, to: target, fallback: pasteboard.getOpinionatedStringContents())
+        return true
+    }
+
+    private func remoteUploadImage(_ pasteboard: NSPasteboard, to target: RemoteDrop.Target) -> Bool {
+        guard let file = RemoteDrop.imageFile(from: pasteboard) else { return false }
 
         remoteUpload([file], to: target, fallback: nil) {
             try? FileManager.default.removeItem(at: file)
+        }
+        return true
+    }
+
+    /// Files that the source app writes only once dropped (Photos, Mail).
+    private func remoteUploadPromises(_ pasteboard: NSPasteboard, to target: RemoteDrop.Target) -> Bool {
+        guard let receivers = pasteboard.readObjects(
+                forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+              !receivers.isEmpty else { return false }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("omnity-\(UUID().uuidString.prefix(8))")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let cleanup = { try? FileManager.default.removeItem(at: dir) }
+
+        // One callback per promised file; wait for all of them, then upload.
+        let group = DispatchGroup()
+        var files: [URL] = []
+        for receiver in receivers {
+            let expected = max(receiver.fileNames.count, 1)
+            var received = 0
+            group.enter()
+            receiver.receivePromisedFiles(atDestination: dir, options: [:], operationQueue: .main) { url, error in
+                if error == nil { files.append(url) }
+                received += 1
+                if received == expected { group.leave() }
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self, !files.isEmpty else { _ = cleanup(); return }
+            self.remoteUpload(files, to: target, fallback: nil) { _ = cleanup() }
         }
         return true
     }
