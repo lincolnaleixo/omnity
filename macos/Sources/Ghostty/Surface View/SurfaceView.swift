@@ -83,6 +83,9 @@ extension Ghostty {
                     .transition(.opacity)
                 }
 
+                // Omnity: remote drop upload progress
+                RemoteDropBadge(surfaceID: surfaceView.id)
+
                 // Readonly indicator badge
                 if surfaceView.readonly {
                     ReadonlyBadge {

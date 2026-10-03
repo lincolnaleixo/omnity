@@ -313,6 +313,12 @@ extension Ghostty {
                 return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
             }
 
+            // Omnity: files or an image pasted into an ssh session are uploaded.
+            if location == GHOSTTY_CLIPBOARD_STANDARD && !list
+                && surfaceView.remotePaste(pasteboard) {
+                return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
+            }
+
             // Gather the representation for each requested MIME type that
             // the pasteboard can serve. We only ever read the requested
             // representations so unrelated (potentially large) clipboard
@@ -336,10 +342,6 @@ extension Ghostty {
             // With nothing to serve and no listing requested there is
             // nothing to complete the read with.
             if contents.isEmpty && !list {
-                // Omnity: an image-only paste into an ssh session is uploaded.
-                if location == GHOSTTY_CLIPBOARD_STANDARD {
-                    _ = surfaceView.remotePasteImage(pasteboard)
-                }
                 return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
             }
 
