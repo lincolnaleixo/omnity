@@ -148,6 +148,15 @@ extension Ghostty.SurfaceView {
         if let url = URL(string: clicked), url.scheme == "file" { clicked = url.path }
         guard URL(string: clicked)?.scheme == nil, ImageViewer.isImage(clicked) else { return false }
 
+        // Core calls this with the renderer lock held, and reading the
+        // screen takes that lock: do the rest once the call has returned.
+        DispatchQueue.main.async { [weak self] in
+            self?.showImageViewer(clicked)
+        }
+        return true
+    }
+
+    private func showImageViewer(_ clicked: String) {
         let target = surfaceModel?.foregroundPID.flatMap { RemoteDrop.target(pid: $0) }
 
         // The filmstrip: image paths on screen, newest last, with the click in it.
@@ -162,7 +171,6 @@ extension Ghostty.SurfaceView {
         ImageViewerState.shared.open(
             ImageViewerModel(paths: paths, index: index, target: target),
             on: id)
-        return true
     }
 
     /// Keys while the viewer is open: arrows move, Esc or space close.
