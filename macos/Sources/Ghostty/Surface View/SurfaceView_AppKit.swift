@@ -2296,6 +2296,9 @@ extension Ghostty.SurfaceView {
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
 
+        // Omnity: in an ssh session, upload the files and type remote paths.
+        if remoteDrop(pb) { return true }
+
         let content = pb.getOpinionatedStringContents()
 
         if let content {

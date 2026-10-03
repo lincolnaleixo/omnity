@@ -3538,6 +3538,16 @@ keybind: Keybinds = .{},
 /// The default is true.
 @"macos-applescript": bool = true,
 
+/// Omnity: if true, files dropped (or an image pasted) into a surface whose
+/// foreground process is `ssh <host>` are uploaded to `~/uploads` on that
+/// host, and the remote paths are typed instead of the local ones.
+///
+/// Uploads use your ssh config; `ControlMaster auto` with `ControlPersist`
+/// reuses the open connection. On failure, the local paths are typed.
+///
+/// The default is false.
+@"macos-remote-drop": bool = false,
+
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application
