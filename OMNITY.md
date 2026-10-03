@@ -8,7 +8,8 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   in the bottom-right corner.
 - `macos-image-viewer = true`: cmd+click an image path to view it over the
   terminal, with a filmstrip of the other image paths on screen; over ssh the
-  images are read from the host.
+  images are read from the host. Image URLs and CleanShot share links open
+  there too. Cmd+click works inside tmux (no shift needed).
 - Display name Omnity, bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).
 
@@ -23,12 +24,12 @@ Build host: robots-mac-server, `~/Developer/omnity`.
 3. Run the parser tests: `cd macos && xcodebuild test -project Ghostty.xcodeproj -scheme Ghostty -only-testing:GhosttyTests/RemoteDropTests SYMROOT=$PWD/build`.
 4. Install on robots-mac-mini as `/Applications/Omnity.app` (copy `zig-out/Ghostty.app`), then quit and reopen it.
 5. Manual tests: drop in a local window (local path); drop in `ssh omni` (remote path, pill);
-   CleanShot Cmd+V in `ssh omni` (remote path); drop with the network down (red pill, local path).
+   CleanShot Cmd+V in `ssh omni` (remote path); cmd+click an image path
+   and a CleanShot link inside tmux (viewer with filmstrip); drop with the network down (red pill, local path).
 6. `git push origin feat/remote-drop`.
 
 ## Not tested yet
 
 - Upload failure (network down or host off): expect a red pill with the error for 5 s,
   then the local path typed. Untested as of 2026-10-03.
-- Image viewer: built and unit-tested, not yet tried in the app (2026-10-03).
 - Installed on robots-mac-mini and robots-macbook.
