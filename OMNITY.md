@@ -44,4 +44,5 @@ Build host: robots-mac-server, `~/Developer/omnity`.
 
 - Upload failure (network down or host off): expect a red pill with the error for 5 s,
   then the local path typed. Untested as of 2026-10-03.
-- Installed on robots-mac-mini and robots-macbook.
+- Self-update end to end: first run 2026-10-05 (release built by launchd, picked up by the app).
+- robots-macbook still runs a build without the updater: install the latest release once by hand.
