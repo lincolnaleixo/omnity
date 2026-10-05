@@ -25,6 +25,12 @@ robots-mac-server runs `omnity-release.sh` every 10 minutes (launchd,
 installs a newer release in `/Applications` and shows "Omnity updated, quit and reopen".
 It never restarts by itself.
 
+Builds are signed with a self-signed identity, "Omnity Self Signing", kept in
+`~/Library/Keychains/omnity-signing.keychain-db` on robots-mac-server (passwordless, so launchd
+can unlock it). macOS keys privacy permissions to the signing identity, so a fixed identity
+keeps Documents and microphone access across updates. If the keychain is lost, create a new
+identity with the same name: every Mac asks for the permissions once more.
+
 ## Monthly upstream merge
 
 Build host: robots-mac-server, `~/Developer/omnity`.

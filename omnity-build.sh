@@ -25,6 +25,12 @@ cp -R macos/build/ReleaseLocal/Ghostty.app zig-out/Omnity.app
 # The release tag OmnityUpdater compares with GitHub's latest release.
 release="${OMNITY_RELEASE:-v$(date -u +%Y%m%d%H%M)-$(git rev-parse --short HEAD)}"
 /usr/libexec/PlistBuddy -c "Add :OmnityRelease string $release" zig-out/Omnity.app/Contents/Info.plist
-codesign --force --deep --sign - zig-out/Omnity.app
+# Sign with the same self-signed identity every time: macOS keeps privacy
+# permissions (Documents, microphone) per signing identity, so an ad-hoc
+# signature would ask for them again after every update. The identity lives
+# in its own passwordless keychain, which launchd jobs can unlock.
+keychain="$HOME/Library/Keychains/omnity-signing.keychain-db"
+security unlock-keychain -p "" "$keychain"
+codesign --force --deep --keychain "$keychain" --sign "Omnity Self Signing" zig-out/Omnity.app
 codesign --verify zig-out/Omnity.app
 echo "Built zig-out/Omnity.app"
