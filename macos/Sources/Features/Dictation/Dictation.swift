@@ -24,7 +24,9 @@ final class Dictation: ObservableObject {
 
     enum Phase: Equatable {
         case idle
+        case downloading(Double)
         case loading
+        case ready
         case listening
         case transcribing
         case failed(String)
@@ -80,30 +82,55 @@ final class Dictation: ObservableObject {
 
     // MARK: Model
 
+    /// Downloads the model the first time, then loads it, showing progress.
+    @MainActor
     private func model() async throws -> WhisperKit {
         if let whisper { return whisper }
         if let loading { return try await loading.value }
 
-        let task = Task { () throws -> WhisperKit in
+        let task = Task { @MainActor () throws -> WhisperKit in
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Omnity/whisper")
+            let variant = WhisperKit.recommendedModels().default
+            var folder = base.appendingPathComponent("models/argmaxinc/whisperkit-coreml/\(variant)")
+
+            // Downloaded before: load offline, without asking the hub.
+            let downloaded = ["AudioEncoder", "TextDecoder", "MelSpectrogram"].allSatisfy {
+                FileManager.default.fileExists(atPath: folder.appendingPathComponent("\($0).mlmodelc").path)
+            }
+            if !downloaded {
+                self.setPhase(.downloading(0))
+                folder = try await WhisperKit.download(variant: variant, downloadBase: base) { progress in
+                    let fraction = progress.fractionCompleted
+                    DispatchQueue.main.async {
+                        if case .downloading = self.phase { self.phase = .downloading(fraction) }
+                    }
+                }
+            }
+
+            self.setPhase(.loading)
             let config = WhisperKitConfig(
-                model: WhisperKit.recommendedModels().default,
-                downloadBase: base,
+                model: variant,
+                modelFolder: folder.path,
                 verbose: false,
                 logLevel: .error,
                 prewarm: true,
                 load: true,
-                download: true)
+                download: false)
             return try await WhisperKit(config)
         }
         loading = task
         do {
             let whisper = try await task.value
             self.whisper = whisper
+            setPhase(.ready)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.phase == .ready { self.setPhase(.idle) }
+            }
             return whisper
         } catch {
             loading = nil
+            fail("Speech model: \(error.localizedDescription)")
             throw error
         }
     }
@@ -111,21 +138,13 @@ final class Dictation: ObservableObject {
     // MARK: Recording
 
     private func start(on surface: Ghostty.SurfaceView) {
-        guard phase == .idle || phase.isFailed else { return }
+        guard phase == .idle || phase == .ready || phase.isFailed else { return }
         self.surface = surface
         surfaceID = surface.id
 
         guard whisper != nil else {
-            // First use: show progress while the model downloads and loads.
-            setPhase(.loading)
-            Task {
-                do {
-                    _ = try await self.model()
-                    await MainActor.run { if self.phase == .loading { self.setPhase(.idle) } }
-                } catch {
-                    await MainActor.run { self.fail("Speech model: \(error.localizedDescription)") }
-                }
-            }
+            // Not ready yet: model() shows the download and load progress.
+            Task { _ = try? await self.model() }
             return
         }
 
@@ -272,6 +291,14 @@ private extension Dictation.Phase {
         if case .failed = self { return true }
         return false
     }
+
+    /// Model setup is shown on every surface; the rest on the dictated one.
+    var isSetup: Bool {
+        switch self {
+        case .downloading, .loading, .ready: return true
+        default: return false
+        }
+    }
 }
 
 /// The dictation pill, bottom-center of the surface being dictated into.
@@ -281,7 +308,8 @@ struct DictationBadge: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if dictation.surfaceID == surfaceID, dictation.phase != .idle {
+            if dictation.phase != .idle,
+               dictation.phase.isSetup || dictation.surfaceID == nil || dictation.surfaceID == surfaceID {
                 pill
                     .padding(.bottom, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -305,8 +333,28 @@ struct DictationBadge: View {
             case .transcribing:
                 TranscribingDots()
                 Text("Transcribing")
+            case .downloading(let fraction):
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Downloading speech model")
+                        Spacer(minLength: 12)
+                        Text("\(Int(fraction * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    ProgressBar(fraction: fraction)
+                }
+                .frame(width: 260)
             case .loading:
-                Text("Loading speech model… (first time downloads it)")
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Loading speech model")
+                        Spacer(minLength: 12)
+                        Text("first time takes a minute").foregroundStyle(.secondary)
+                    }
+                    ProgressBar(fraction: nil)
+                }
+                .frame(width: 300)
+            case .ready:
+                Text("Speech ready · hold right ⌥ to talk")
             case .failed(let message):
                 Text(message).lineLimit(2)
             case .idle:
@@ -329,13 +377,50 @@ struct DictationBadge: View {
             Image(systemName: "mic.fill").foregroundStyle(.red)
         case .transcribing:
             Image(systemName: "waveform").foregroundStyle(Color.accentColor)
-        case .loading:
+        case .downloading:
             Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.accentColor)
+        case .loading:
+            Image(systemName: "cpu").foregroundStyle(Color.accentColor)
+        case .ready:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         case .idle:
             EmptyView()
         }
+    }
+}
+
+/// A thin progress bar; nil fraction slides back and forth.
+private struct ProgressBar: View {
+    let fraction: Double?
+    @State private var offset: CGFloat = -1
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.12))
+                if let fraction {
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [Color.accentColor.opacity(0.75), Color.accentColor],
+                            startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(geo.size.width * fraction, 4))
+                        .animation(.easeOut(duration: 0.2), value: fraction)
+                } else {
+                    Capsule()
+                        .fill(Color.accentColor)
+                        .frame(width: geo.size.width * 0.3)
+                        .offset(x: (offset + 1) / 2 * geo.size.width * 0.7)
+                        .onAppear {
+                            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                                offset = 1
+                            }
+                        }
+                }
+            }
+        }
+        .frame(height: 5)
     }
 }
 
