@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import SwiftUI
 import WhisperKit
+import os
 
 /// Omnity: hold the right Option key, speak, release: the speech is
 /// transcribed on device with Whisper (WhisperKit) and typed into the
@@ -12,6 +13,7 @@ import WhisperKit
 /// loaded.
 final class Dictation: ObservableObject {
     static let shared = Dictation()
+    static let log = Logger(subsystem: "com.lincolnaleixo.omnity", category: "dictation")
 
     static let rightOptionKeyCode: UInt16 = 61
     /// Words Whisper should spell this way; it biases the decoder toward them.
@@ -40,7 +42,7 @@ final class Dictation: ObservableObject {
     private weak var surface: Ghostty.SurfaceView?
     private var whisper: WhisperKit?
     private var loading: Task<WhisperKit, Error>?
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let lock = NSLock()
     private var samples: [Float] = []
     private var startedAt = Date()
@@ -66,8 +68,11 @@ final class Dictation: ObservableObject {
         switch event.type {
         case .flagsChanged where event.keyCode == Self.rightOptionKeyCode:
             if event.modifierFlags.contains(.option) {
-                guard enabled,
-                      let surface = NSApp.keyWindow?.firstResponder as? Ghostty.SurfaceView else { return }
+                guard enabled else { return }
+                guard let surface = NSApp.keyWindow?.firstResponder as? Ghostty.SurfaceView else {
+                    Self.log.notice("right option: no focused terminal")
+                    return
+                }
                 start(on: surface)
             } else {
                 stop()
@@ -138,7 +143,10 @@ final class Dictation: ObservableObject {
     // MARK: Recording
 
     private func start(on surface: Ghostty.SurfaceView) {
-        guard phase == .idle || phase == .ready || phase.isFailed else { return }
+        guard phase == .idle || phase == .ready || phase.isFailed else {
+            Self.log.notice("right option ignored while \(String(describing: self.phase), privacy: .public)")
+            return
+        }
         self.surface = surface
         surfaceID = surface.id
 
@@ -152,7 +160,11 @@ final class Dictation: ObservableObject {
         case .authorized:
             break
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    self.fail(granted ? "Microphone allowed, hold right ⌥ again" : "Microphone not allowed")
+                }
+            }
             return
         default:
             fail("Allow the microphone for Omnity in System Settings › Privacy")
@@ -172,6 +184,10 @@ final class Dictation: ObservableObject {
     private func startEngine() throws {
         lock.lock(); samples.removeAll(keepingCapacity: true); lock.unlock()
 
+        // A new engine each time follows the current default input (AirPods
+        // connected since the last recording, etc.).
+        let engine = AVAudioEngine()
+        self.engine = engine
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0,
@@ -214,8 +230,9 @@ final class Dictation: ObservableObject {
     }
 
     private func stopEngine() -> [Float] {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
         lock.lock(); defer { lock.unlock() }
         return samples
     }
@@ -240,7 +257,6 @@ final class Dictation: ObservableObject {
         Task {
             do {
                 let text = try await self.transcribe(audio)
-                Self.keep(audio, text: text)
                 await MainActor.run {
                     if !text.isEmpty { self.surface?.surfaceModel?.sendText(text) }
                     self.setPhase(.idle)
@@ -248,33 +264,6 @@ final class Dictation: ObservableObject {
             } catch {
                 await MainActor.run { self.fail(error.localizedDescription) }
             }
-        }
-    }
-
-    /// Keeps the last recordings (16 kHz WAV + transcript) to compare engines.
-    static let recordings = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Omnity/dictation")
-
-    private static func keep(_ audio: [Float], text: String) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: recordings, withIntermediateDirectories: true)
-        let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let wav = recordings.appendingPathComponent("\(name).wav")
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(audio.count)),
-              let file = try? AVAudioFile(forWriting: wav, settings: format.settings) else { return }
-        buffer.frameLength = AVAudioFrameCount(audio.count)
-        audio.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: audio.count) }
-        try? file.write(from: buffer)
-        try? (text + "\n").write(to: recordings.appendingPathComponent("\(name).txt"), atomically: true, encoding: .utf8)
-
-        // Keep the newest 30 pairs.
-        let wavs = ((try? fm.contentsOfDirectory(atPath: recordings.path)) ?? [])
-            .filter { $0.hasSuffix(".wav") }.sorted()
-        for old in wavs.dropLast(30) {
-            let base = recordings.appendingPathComponent(String(old.dropLast(4)))
-            try? fm.removeItem(at: base.appendingPathExtension("wav"))
-            try? fm.removeItem(at: base.appendingPathExtension("txt"))
         }
     }
 
@@ -303,6 +292,9 @@ final class Dictation: ObservableObject {
     // MARK: State
 
     private func setPhase(_ phase: Phase) {
+        if case .downloading = phase {} else {
+            Self.log.notice("phase \(String(describing: phase), privacy: .public)")
+        }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { self.phase = phase }
     }
 
