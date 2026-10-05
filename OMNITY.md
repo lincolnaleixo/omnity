@@ -15,20 +15,30 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
 
 Every change is marked with an `Omnity:` comment.
 
+## Releases and updates
+
+Every commit pushed to `feat/remote-drop` becomes a release by itself:
+robots-mac-server runs `omnity-release.sh` every 10 minutes (launchd,
+`~/Library/LaunchAgents/com.lincolnaleixo.omnity-release.plist`, log in
+`~/Library/Logs/omnity-release.log`). It builds with `omnity-build.sh` and publishes
+`Omnity.zip` as a GitHub release (newest 5 kept). Each Omnity checks at launch and hourly,
+installs a newer release in `/Applications` and shows "Omnity updated, quit and reopen".
+It never restarts by itself.
+
 ## Monthly upstream merge
 
 Build host: robots-mac-server, `~/Developer/omnity`.
 
 1. `git fetch upstream && git merge upstream/main` (fix conflicts; search `Omnity:`).
-2. `./omnity-build.sh` (zig build, then names and re-signs `zig-out/Omnity.app`; needs Xcode,
-   Metal Toolchain and the Zig in `build.zig.zon`).
-3. Run the parser tests: `cd macos && xcodebuild test -project Ghostty.xcodeproj -scheme Ghostty -only-testing:GhosttyTests/RemoteDropTests SYMROOT=$PWD/build`.
-4. Install on robots-mac-mini and robots-macbook as `/Applications/Omnity.app` (copy
-   `zig-out/Omnity.app`), then quit and reopen it.
-5. Manual tests: drop in a local window (local path); drop in `ssh omni` (remote path, pill);
-   CleanShot Cmd+V in `ssh omni` (remote path); cmd+click an image path
-   and a CleanShot link inside tmux (viewer with filmstrip); drop with the network down (red pill, local path).
-6. `git push origin feat/remote-drop`.
+2. `./omnity-build.sh` (zig builds the library, an Xcode scheme build makes the app, then it is
+   named and re-signed as `zig-out/Omnity.app`; needs Xcode, Metal Toolchain and the Zig in
+   `build.zig.zon`).
+3. Run the tests: `cd macos && xcodebuild test -project Ghostty.xcodeproj -scheme Ghostty -arch arm64
+   -only-testing:GhosttyTests/RemoteDropTests -only-testing:GhosttyTests/ImageViewerTests SYMROOT=$PWD/build`.
+4. Try `zig-out/Omnity.app`: drop in a local window (local path); drop in `ssh omni` (remote path, pill);
+   CleanShot Cmd+V in `ssh omni` (remote path); cmd+click an image path and a CleanShot link inside
+   tmux (viewer with filmstrip); hold right Option and dictate.
+5. `git push origin feat/remote-drop`; the release and the updates follow by themselves.
 
 ## Not tested yet
 

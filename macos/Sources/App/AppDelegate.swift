@@ -212,8 +212,9 @@ class AppDelegate: NSObject,
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Omnity: hold right Option to dictate.
+        // Omnity: hold right Option to dictate; install new releases.
         Dictation.shared.install()
+        OmnityUpdater.shared.start()
 
         // System settings overrides
         UserDefaults.ghostty.register(defaults: [

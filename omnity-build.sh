@@ -22,6 +22,9 @@ zig build -Doptimize=ReleaseFast -Demit-macos-app=false
 rm -rf zig-out/Omnity.app
 cp -R macos/build/ReleaseLocal/Ghostty.app zig-out/Omnity.app
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Omnity" zig-out/Omnity.app/Contents/Info.plist
+# The release tag OmnityUpdater compares with GitHub's latest release.
+release="${OMNITY_RELEASE:-v$(date -u +%Y%m%d%H%M)-$(git rev-parse --short HEAD)}"
+/usr/libexec/PlistBuddy -c "Add :OmnityRelease string $release" zig-out/Omnity.app/Contents/Info.plist
 codesign --force --deep --sign - zig-out/Omnity.app
 codesign --verify zig-out/Omnity.app
 echo "Built zig-out/Omnity.app"
