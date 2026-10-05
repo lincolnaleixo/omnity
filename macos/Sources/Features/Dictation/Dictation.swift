@@ -240,6 +240,7 @@ final class Dictation: ObservableObject {
         Task {
             do {
                 let text = try await self.transcribe(audio)
+                Self.keep(audio, text: text)
                 await MainActor.run {
                     if !text.isEmpty { self.surface?.surfaceModel?.sendText(text) }
                     self.setPhase(.idle)
@@ -247,6 +248,33 @@ final class Dictation: ObservableObject {
             } catch {
                 await MainActor.run { self.fail(error.localizedDescription) }
             }
+        }
+    }
+
+    /// Keeps the last recordings (16 kHz WAV + transcript) to compare engines.
+    static let recordings = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Omnity/dictation")
+
+    private static func keep(_ audio: [Float], text: String) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let wav = recordings.appendingPathComponent("\(name).wav")
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(audio.count)),
+              let file = try? AVAudioFile(forWriting: wav, settings: format.settings) else { return }
+        buffer.frameLength = AVAudioFrameCount(audio.count)
+        audio.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: audio.count) }
+        try? file.write(from: buffer)
+        try? (text + "\n").write(to: recordings.appendingPathComponent("\(name).txt"), atomically: true, encoding: .utf8)
+
+        // Keep the newest 30 pairs.
+        let wavs = ((try? fm.contentsOfDirectory(atPath: recordings.path)) ?? [])
+            .filter { $0.hasSuffix(".wav") }.sorted()
+        for old in wavs.dropLast(30) {
+            let base = recordings.appendingPathComponent(String(old.dropLast(4)))
+            try? fm.removeItem(at: base.appendingPathExtension("wav"))
+            try? fm.removeItem(at: base.appendingPathExtension("txt"))
         }
     }
 
@@ -330,6 +358,9 @@ struct DictationBadge: View {
                 Waveform(levels: dictation.levels)
                     .frame(width: 150, height: 22)
                 Text("Listening")
+                if let mic = AVCaptureDevice.default(for: .audio)?.localizedName {
+                    Text("· \(mic)").foregroundStyle(.secondary).lineLimit(1)
+                }
             case .transcribing:
                 TranscribingDots()
                 Text("Transcribing")
