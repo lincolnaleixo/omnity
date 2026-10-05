@@ -3556,6 +3556,13 @@ keybind: Keybinds = .{},
 /// The default is false.
 @"macos-image-viewer": bool = false,
 
+/// Omnity: if true, hold the right Option key to dictate: speech is
+/// transcribed on device with Whisper and typed into the focused surface.
+/// The model is downloaded once on first use.
+///
+/// The default is false.
+@"macos-dictation": bool = false,
+
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application

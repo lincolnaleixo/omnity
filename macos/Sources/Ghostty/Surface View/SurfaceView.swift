@@ -85,6 +85,7 @@ extension Ghostty {
 
                 // Omnity: remote drop upload progress
                 RemoteDropBadge(surfaceID: surfaceView.id)
+                DictationBadge(surfaceID: surfaceView.id)
                 ImageViewerOverlay(surfaceID: surfaceView.id)
                     .zIndex(2)
 
