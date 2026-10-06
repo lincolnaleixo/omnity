@@ -21,9 +21,9 @@ Every commit pushed to `feat/remote-drop` becomes a release by itself:
 robots-mac-server runs `omnity-release.sh` every 10 minutes (launchd,
 `~/Library/LaunchAgents/com.lincolnaleixo.omnity-release.plist`, log in
 `~/Library/Logs/omnity-release.log`). It builds with `omnity-build.sh` and publishes
-`Omnity.zip` as a GitHub release (newest 5 kept). Each Omnity checks at launch and hourly,
-installs a newer release in `/Applications` and shows "Omnity updated, quit and reopen".
-It never restarts by itself.
+`Omnity.zip` as a GitHub release (newest 5 kept). Each Omnity checks at launch and every 15 minutes,
+installs a newer release in `/Applications` in the background and shows "Omnity update
+ready" with a Restart button (× hides it until next launch). It never restarts by itself.
 
 Builds are signed with a self-signed identity, "Omnity Self Signing", kept in
 `~/Library/Keychains/omnity-signing.keychain-db` on robots-mac-server (passwordless, so launchd

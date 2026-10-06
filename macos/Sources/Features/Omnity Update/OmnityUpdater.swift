@@ -4,9 +4,9 @@ import os
 
 /// Omnity: installs new releases by itself. robots-mac-server builds every
 /// new commit and publishes `Omnity.zip` as a GitHub release
-/// (omnity-release.sh). This checks at launch and hourly, replaces the app
-/// on disk, and asks for a restart. It never restarts by itself, since that
-/// would close the terminals.
+/// (omnity-release.sh). This checks at launch and every 15 minutes, replaces
+/// the app on disk in the background, and offers a Restart button. It never
+/// restarts by itself, since that would close the terminals.
 final class OmnityUpdater: ObservableObject {
     static let shared = OmnityUpdater()
     static let latestURL = URL(string: "https://api.github.com/repos/lincolnaleixo/omnity/releases/latest")!
@@ -15,15 +15,17 @@ final class OmnityUpdater: ObservableObject {
     /// The release of the running app, set by omnity-build.sh.
     static let running = Bundle.main.infoDictionary?["OmnityRelease"] as? String
 
-    /// True while the "restart to update" pill shows.
+    /// True while the "update ready" pill shows.
     @Published private(set) var showing = false
     private var timer: Timer?
     private var busy = false
+    /// The release whose pill was closed with ×, so it does not come back.
+    private var dismissed: String?
 
     func start() {
         guard Self.running != nil, timer == nil else { return }
         check()
-        timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.check()
         }
     }
@@ -35,7 +37,7 @@ final class OmnityUpdater: ObservableObject {
             do {
                 if let tag = try await Self.update() {
                     Self.log.notice("installed \(tag, privacy: .public)")
-                    await MainActor.run { self.announce() }
+                    await MainActor.run { self.announce(tag) }
                 }
             } catch {
                 Self.log.error("update failed: \(error.localizedDescription, privacy: .public)")
@@ -44,11 +46,30 @@ final class OmnityUpdater: ObservableObject {
         }
     }
 
-    private func announce() {
+    private func announce(_ tag: String) {
+        guard tag != dismissed, !showing else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showing = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-            withAnimation(.easeIn(duration: 0.25)) { self.showing = false }
-        }
+    }
+
+    /// Hides the pill; the new release starts the next time Omnity opens.
+    func dismiss() {
+        dismissed = Self.release(of: Bundle.main.bundleURL)
+        withAnimation(.easeIn(duration: 0.2)) { showing = false }
+    }
+
+    /// Quits (with the usual confirmation if commands are running) and opens
+    /// the new release once this process is gone.
+    func restart() {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let relaunch = Process()
+        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunch.arguments = [
+            "-c",
+            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
+            Bundle.main.bundleURL.path,
+        ]
+        try? relaunch.run()
+        NSApp.terminate(nil)
     }
 
     private struct Release: Decodable {
@@ -120,7 +141,7 @@ final class OmnityUpdater: ObservableObject {
     }
 }
 
-/// "Omnity updated" pill, top-center of every surface.
+/// "Update ready" pill with Restart and close, top-center of every surface.
 struct OmnityUpdateBadge: View {
     @ObservedObject private var updater = OmnityUpdater.shared
 
@@ -131,12 +152,30 @@ struct OmnityUpdateBadge: View {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.green)
-                    Text("Omnity updated")
-                    Text("· ⌘Q and reopen to use it").foregroundStyle(.secondary)
+                    Text("Omnity update ready")
+
+                    Button("Restart") { updater.restart() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.accentColor))
+
+                    Button { updater.dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Later: the update starts next time Omnity opens")
                 }
                 .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+                .padding(.leading, 14)
+                .padding(.trailing, 8)
+                .padding(.vertical, 7)
                 .background(.regularMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
                 .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
@@ -144,7 +183,7 @@ struct OmnityUpdateBadge: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // Only the pill takes clicks; the empty area passes them to the terminal.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .allowsHitTesting(false)
     }
 }
