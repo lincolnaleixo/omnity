@@ -106,12 +106,21 @@ const bare_relative_path_branch =
     path_chars ++ "+" ++
     no_trailing_colon;
 
+// Omnity: Branch 4: bare domains such as example.com, x.com.br/path or
+// host.ts.net:8443, limited to common TLDs so file names do not match.
+// The macOS app opens them as https (BareLink).
+const bare_domain_branch =
+    \\(?<![\w@.\/:\-])(?:[A-Za-z0-9][A-Za-z0-9\-]*\.)+(?:com|net|org|io|dev|ai|co|me|gg|xyz|tv|info|biz|us|uk|de|fr|es|it|pt|br|ca|eu|cloud|site|tech|page|link|to|ly)(?![\w\-])(?::[0-9]+)?(?:\/[\w\-.~:\/?#@!$&*+,;=%]*)?
+++ no_trailing_punctuation;
+
 pub const regex =
     scheme_url_branch ++
     "|" ++
     rooted_or_relative_path_branch ++
     "|" ++
-    bare_relative_path_branch;
+    bare_relative_path_branch ++
+    "|" ++
+    bare_domain_branch;
 
 test "url regex" {
     const testing = std.testing;
@@ -136,6 +145,15 @@ test "url regex" {
         .{
             .input = "hello https://example.com world",
             .expect = "https://example.com",
+        },
+        // Omnity: bare domains.
+        .{
+            .input = "- silasmullinssecrets.com abre a pagina",
+            .expect = "silasmullinssecrets.com",
+        },
+        .{
+            .input = "see omni.tiffany-ling.ts.net:8443.",
+            .expect = "omni.tiffany-ling.ts.net:8443",
         },
         .{
             .input = "https://example.com/foo(bar) more",

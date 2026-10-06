@@ -757,6 +757,12 @@ extension Ghostty {
                    view.openImageViewer(Ghostty.Action.OpenURL(c: action.action.open_url)) {
                     return true
                 }
+                // Omnity: scheme-less links that start with a domain open as https.
+                let link = Ghostty.Action.OpenURL(c: action.action.open_url)
+                if link.kind != .osc8, let web = BareLink.webURL(link.url) {
+                    NSWorkspace.shared.open(web)
+                    return true
+                }
                 return openURL(action.action.open_url)
 
             case GHOSTTY_ACTION_UNDO:
