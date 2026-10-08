@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import GhosttyKit
 
 /// Omnity: colored text for the window switcher preview. A small, self-contained
@@ -14,6 +15,23 @@ struct AnsiRGB: Equatable {
 
     var color: Color { Color(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255) }
 
+    /// The terminal's `minimum-contrast`: if the WCAG contrast ratio with `bg` is
+    /// below `min`, white or black, whichever contrasts more.
+    func contrasted(against bg: AnsiRGB, min: Double) -> AnsiRGB {
+        func lum(_ c: AnsiRGB) -> Double {
+            func lin(_ v: UInt8) -> Double {
+                let x = Double(v) / 255
+                return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+        }
+        func ratio(_ a: AnsiRGB, _ b: AnsiRGB) -> Double {
+            (max(lum(a), lum(b)) + 0.05) / (Swift.min(lum(a), lum(b)) + 0.05)
+        }
+        guard ratio(self, bg) < min else { return self }
+        let (white, black) = (AnsiRGB(255, 255, 255), AnsiRGB(0, 0, 0))
+        return ratio(white, bg) > ratio(black, bg) ? white : black
+    }
     func mixed(with o: AnsiRGB, _ t: Double) -> AnsiRGB {
         func m(_ a: UInt8, _ b: UInt8) -> UInt8 { UInt8((Double(a) * (1 - t) + Double(b) * t).rounded()) }
         return AnsiRGB(m(r, o.r), m(g, o.g), m(b, o.b))
@@ -25,6 +43,13 @@ struct AnsiTheme: Equatable {
     var fg: AnsiRGB
     var bg: AnsiRGB
     var palette: [AnsiRGB]
+    /// `bold-color`: nil = bold keeps its colors, `.bright` = palette 0-7 turn 8-15,
+    /// `.color` = bold default text uses that color (and palette 0-7 turn bright too).
+    var bold: Bold? = nil
+    /// `minimum-contrast` (1 = off) and `faint-opacity`.
+    var minContrast = 1.0
+    var faintOpacity = 0.5
+    enum Bold: Equatable { case bright, color(AnsiRGB) }
 
     /// Tokyo Night (Lincoln's tmux theme) for the 16 base colors, xterm for the rest.
     static let fallback: AnsiTheme = {
@@ -52,6 +77,17 @@ extension Ghostty.Config {
         }
         theme.fg = color("foreground") ?? theme.fg
         theme.bg = color("background") ?? theme.bg
+        func number(_ key: String) -> Double? {
+            var v = 0.0
+            return ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) ? v : nil
+        }
+        theme.minContrast = number("minimum-contrast") ?? theme.minContrast
+        theme.faintOpacity = number("faint-opacity") ?? theme.faintOpacity
+        var bold = ghostty_config_bold_color_s()
+        let boldKey = "bold-color"
+        if ghostty_config_get(config, &bold, boldKey, UInt(boldKey.lengthOfBytes(using: .utf8))) {
+            theme.bold = bold.kind == 0 ? .bright : .color(AnsiRGB(bold.color.r, bold.color.g, bold.color.b))
+        }
         var pal = ghostty_config_palette_s()
         let key = "palette"
         if ghostty_config_get(config, &pal, key, UInt(key.lengthOfBytes(using: .utf8))) {
@@ -65,6 +101,8 @@ extension Ghostty.Config {
 
 struct AnsiStyle: Equatable {
     var fg: AnsiRGB?
+    /// Palette index of `fg` when it came from the palette (for bold-color).
+    var fgIndex: Int?
     var bg: AnsiRGB?
     var bold = false, dim = false, italic = false, underline = false, reverse = false
 }
@@ -123,12 +161,13 @@ enum AnsiParser {
             guard v.count == 3, v.allSatisfy({ (0...255).contains($0) }) else { return nil }
             return AnsiRGB(UInt8(v[0]), UInt8(v[1]), UInt8(v[2]))
         }
-        /// 5;n or 2;r;g;b from `a` (after the 38/48); returns the color and how many values it used.
-        func extended(_ a: ArraySlice<Int>) -> (AnsiRGB?, Int) {
+        /// 5;n or 2;r;g;b from `a` (after the 38/48); returns the color, its palette
+        /// index (5;n only) and how many values it used.
+        func extended(_ a: ArraySlice<Int>) -> (AnsiRGB?, Int?, Int) {
             switch a.first {
-            case 5: return (a.count >= 2 ? pal(a[a.startIndex + 1]) : nil, 2)
-            case 2: return (a.count >= 4 ? rgb(Array(a.dropFirst().prefix(3))) : nil, 4)
-            default: return (nil, a.count)
+            case 5: return (a.count >= 2 ? pal(a[a.startIndex + 1]) : nil, a.count >= 2 ? a[a.startIndex + 1] : nil, 2)
+            case 2: return (a.count >= 4 ? rgb(Array(a.dropFirst().prefix(3))) : nil, nil, 4)
+            default: return (nil, nil, a.count)
             }
         }
         let parts = params.isEmpty ? ["0"] : params.components(separatedBy: ";")
@@ -145,7 +184,8 @@ enum AnsiParser {
                     // Empty fields (38:2::r:g:b) drop out; a numeric color space id is removed.
                     var v = sub.dropFirst().compactMap { $0 }
                     if v.first == 2, v.count == 5 { v.remove(at: 1) }
-                    if let c = extended(v[...]).0 { if sub[0] == 38 { st.fg = c } else { st.bg = c } }
+                    let (c, index, _) = extended(v[...])
+                    if let c { if sub[0] == 38 { st.fg = c; st.fgIndex = index } else { st.bg = c } }
                 default: break
                 }
                 continue
@@ -162,17 +202,17 @@ enum AnsiParser {
             case 23: st.italic = false
             case 24: st.underline = false
             case 27: st.reverse = false
-            case 30...37: st.fg = pal(n - 30)
-            case 39: st.fg = nil
+            case 30...37: st.fg = pal(n - 30); st.fgIndex = n - 30
+            case 39: st.fg = nil; st.fgIndex = nil
             case 40...47: st.bg = pal(n - 40)
             case 49: st.bg = nil
-            case 90...97: st.fg = pal(n - 90 + 8)
+            case 90...97: st.fg = pal(n - 90 + 8); st.fgIndex = n - 90 + 8
             case 100...107: st.bg = pal(n - 100 + 8)
             case 38, 48, 58:
                 let rest = parts[i...].map { Int($0) ?? 0 }
-                let (c, used) = extended(rest[...])
+                let (c, index, used) = extended(rest[...])
                 i += min(used, rest.count)
-                if let c { if n == 38 { st.fg = c } else if n == 48 { st.bg = c } }
+                if let c { if n == 38 { st.fg = c; st.fgIndex = index } else if n == 48 { st.bg = c } }
             default: break
             }
         }
@@ -180,22 +220,57 @@ enum AnsiParser {
 }
 
 enum AnsiText {
-    static func attributed(_ line: String, theme: AnsiTheme, size: CGFloat) -> AttributedString {
+    /// Colors of a run the way the terminal paints them: bold-color, reverse,
+    /// faint-opacity, then minimum-contrast against the cell background.
+    static func colors(_ st: AnsiStyle, theme: AnsiTheme, graphics: Bool = false) -> (fg: AnsiRGB, bg: AnsiRGB?) {
+        var fg = st.fg ?? theme.fg
+        if st.bold, let bold = theme.bold {
+            if let i = st.fgIndex, i < 8 {
+                fg = theme.palette[i + 8]
+            } else if st.fgIndex == nil, st.fg == nil || st.fg == theme.fg, case .color(let c) = bold {
+                fg = c
+            }
+        }
+        var bg = st.bg
+        if st.reverse { (fg, bg) = (bg ?? theme.bg, fg) }
+        // Like the terminal: contrast first (not for box, block and Powerline glyphs), faint is alpha on top.
+        if theme.minContrast > 1, !graphics { fg = fg.contrasted(against: bg ?? theme.bg, min: theme.minContrast) }
+        if st.dim { fg = fg.mixed(with: bg ?? theme.bg, 1 - theme.faintOpacity) }
+        return (fg, bg)
+    }
+
+    /// Terminal graphics (box drawing, blocks, legacy computing, Powerline): no minimum-contrast.
+    static func isGraphics(_ c: Unicode.Scalar) -> Bool {
+        switch c.value {
+        case 0x2500...0x259F, 0x1FB00...0x1FBFF, 0x1CC00...0x1CEBF, 0xE0B0...0xE0D7: return true
+        default: return false
+        }
+    }
+
+    /// `text` split into runs of graphics and non-graphics characters.
+    static func segments(_ text: String) -> [(String, Bool)] {
+        var out: [(String, Bool)] = []
+        for c in text.unicodeScalars {
+            let g = isGraphics(c)
+            if let last = out.last, last.1 == g { out[out.count - 1].0.unicodeScalars.append(c) } else { out.append((String(c), g)) }
+        }
+        return out
+    }
+
+    static func attributed(_ line: String, theme: AnsiTheme, fonts: SwitcherFonts) -> AttributedString {
         var out = AttributedString()
         for run in AnsiParser.parse(line, palette: theme.palette) {
-            var s = AttributedString(run.text)
             let st = run.style
-            var fg = st.fg ?? theme.fg
-            var bg = st.bg
-            if st.reverse { (fg, bg) = (bg ?? theme.bg, st.fg ?? theme.fg) }
-            if st.dim { fg = fg.mixed(with: bg ?? theme.bg, 0.5) }
-            s.foregroundColor = fg.color
-            if let bg { s.backgroundColor = bg.color }
-            if st.underline { s.underlineStyle = .single }
-            var font = Font.system(size: size, weight: st.bold ? .bold : .regular, design: .monospaced)
-            if st.italic { font = font.italic() }
-            s.font = font
-            out += s
+            for (text, graphics) in segments(run.text) {
+                var s = AttributedString(text)
+                let (fg, bg) = colors(st, theme: theme, graphics: graphics)
+                s.foregroundColor = fg.color
+                if let bg { s.backgroundColor = bg.color }
+                if st.underline { s.underlineStyle = .single }
+                s.font = Font(fonts.font(bold: st.bold, italic: st.italic) as CTFont)
+                if fonts.kern != 0 { s.kern = fonts.kern }
+                out += s
+            }
         }
         return out.characters.isEmpty ? AttributedString(" ") : out
     }

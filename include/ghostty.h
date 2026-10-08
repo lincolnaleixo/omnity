@@ -561,6 +561,27 @@ typedef struct {
   ghostty_config_color_s colors[256];
 } ghostty_config_palette_s;
 
+// Omnity: font settings for the window switcher preview (src/config/c_get.zig)
+// c_get.StringList
+typedef struct {
+  uintptr_t len;
+  const char* items[16];
+} ghostty_config_string_list_s;
+// c_get.FontStyleC (kind: 0 default, 1 false, 2 name)
+typedef struct {
+  uint8_t kind;
+  const char* name;
+} ghostty_config_font_style_s;
+// c_get.BoldColorC (kind: 0 bright, 1 color)
+typedef struct {
+  uint8_t kind;
+  ghostty_config_color_s color;
+} ghostty_config_bold_color_s;
+// c_get.MetricModifierC
+typedef struct {
+  bool absolute;
+  double value;
+} ghostty_config_metric_modifier_s;
 // config.QuickTerminalSize
 typedef enum {
   GHOSTTY_QUICK_TERMINAL_SIZE_NONE,
@@ -1151,6 +1172,8 @@ GHOSTTY_API void ghostty_config_load_default_files(ghostty_config_t);
 GHOSTTY_API void ghostty_config_load_recursive_files(ghostty_config_t);
 GHOSTTY_API void ghostty_config_finalize(ghostty_config_t);
 GHOSTTY_API bool ghostty_config_get(ghostty_config_t, void*, const char*, uintptr_t);
+// Omnity: embedded fonts (0 JetBrains Mono variable, 1 its italic, 2 Symbols Nerd Font).
+GHOSTTY_API const uint8_t* ghostty_omnity_default_font(uint8_t, uintptr_t*);
 GHOSTTY_API ghostty_input_trigger_s ghostty_config_trigger(ghostty_config_t,
                                                               const char*,
                                                               uintptr_t);

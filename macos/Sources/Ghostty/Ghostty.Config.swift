@@ -486,6 +486,9 @@ extension Ghostty {
             return String(cString: ptr)
         }
 
+        /// Omnity: the terminal font settings (families, size, styles, features, cell
+        /// adjustments) that the window switcher preview draws with.
+        var omnityFont: SwitcherFontConfig { SwitcherFontConfig(config: config) }
         var macosRemoteDrop: Bool {
             guard let config = self.config else { return false }
             var v = false

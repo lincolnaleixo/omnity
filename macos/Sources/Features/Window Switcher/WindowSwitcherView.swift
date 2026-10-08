@@ -146,7 +146,6 @@ private struct SwitcherRow: View {
 
 private struct SwitcherPreview: View {
     @ObservedObject var switcher: WindowSwitcher
-    private static let lineHeight: CGFloat = 13
 
     private var entry: SwitcherEntry? {
         switcher.entries.first { $0.id == switcher.selection }
@@ -164,13 +163,13 @@ private struct SwitcherPreview: View {
             // Only the last lines that fit, so nothing overflows the box.
             GeometryReader { geo in
                 let all = (switcher.preview ?? "").components(separatedBy: "\n")
-                let fit = max(1, Int((geo.size.height - 20) / Self.lineHeight))
+                let fit = max(1, Int((geo.size.height - 20) / switcher.fonts.lineHeight))
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(all.suffix(fit).enumerated()), id: \.offset) { _, line in
-                        Text(AnsiText.attributed(line, theme: switcher.theme, size: 10.5))
+                        Text(AnsiText.attributed(line, theme: switcher.theme, fonts: switcher.fonts))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .frame(height: Self.lineHeight, alignment: .leading)
+                            .frame(height: switcher.fonts.lineHeight, alignment: .leading)
                     }
                 }
                 .padding(10)

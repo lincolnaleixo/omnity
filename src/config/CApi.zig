@@ -7,6 +7,7 @@ const String = @import("../main_c.zig").String;
 const Config = @import("Config.zig");
 const c_get = @import("c_get.zig");
 const edit = @import("edit.zig");
+const fontpkg = @import("../font/main.zig");
 const Key = @import("key.zig").Key;
 
 const log = std.log.scoped(.config);
@@ -99,6 +100,20 @@ export fn ghostty_config_get(
     @setEvalBranchQuota(10_000);
     const key = std.meta.stringToEnum(Key, key_str[0..len]) orelse return false;
     return c_get.get(self, key, ptr);
+}
+
+/// Omnity: fonts the terminal draws with when nothing else has a glyph, so the macOS
+/// window switcher preview can use the very same ones: 0 = JetBrains Mono (the
+/// `font-family` default, variable), 1 = its italic, 2 = Symbols Nerd Font.
+export fn ghostty_omnity_default_font(kind: u8, len: *usize) ?[*]const u8 {
+    const data = switch (kind) {
+        0 => fontpkg.embedded.variable,
+        1 => fontpkg.embedded.variable_italic,
+        2 => fontpkg.embedded.symbols_nerd_font,
+        else => return null,
+    };
+    len.* = data.len;
+    return data.ptr;
 }
 
 export fn ghostty_config_trigger(

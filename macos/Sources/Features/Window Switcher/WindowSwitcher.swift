@@ -146,6 +146,8 @@ final class WindowSwitcher: ObservableObject {
     @Published private(set) var preview: String?
     /// Omnity: the terminal's colors, read when the panel opens.
     @Published private(set) var theme = AnsiTheme.fallback
+    /// Omnity: the terminal's fonts (family, size, cell height), read when the panel opens.
+    @Published private(set) var fonts = SwitcherFonts.system(size: 10.5)
 
     private var monitor: Any?
     private var panel: SwitcherPanel?
@@ -233,6 +235,9 @@ final class WindowSwitcher: ObservableObject {
         self.backwards = backwards
         failed = false
         theme = (NSApp.delegate as? AppDelegate)?.ghostty.config.switcherTheme ?? .fallback
+        if let config = (NSApp.delegate as? AppDelegate)?.ghostty.config {
+            fonts = .resolve(config.omnityFont, backingScale: NSScreen.main?.backingScaleFactor ?? 2)
+        }
         selection = initialSelection()
         let panel = SwitcherPanel(over: window, switcher: self)
         self.panel = panel
