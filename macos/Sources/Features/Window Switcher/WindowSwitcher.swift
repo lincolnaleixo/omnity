@@ -106,6 +106,16 @@ enum TmuxSwitchClient {
     /// Runs `tmux-switch <args>` on `host`; nil on any failure. One ssh
     /// connection is kept open for ten minutes (ControlPersist).
     static func run(host: String, _ args: [String]) async -> Data? {
+        guard let r = await execute(host: host, args), r.status == 0 else { return nil }
+        return r.out
+    }
+    /// Omnity: like `run`, but keeps the exit status and stderr (nil only when ssh can't start).
+    struct Result {
+        var status: Int32
+        var out: Data
+        var err: String
+    }
+    static func execute(host: String, _ args: [String]) async -> Result? {
         await withCheckedContinuation { cont in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -116,7 +126,8 @@ enum TmuxSwitchClient {
             ]
             let out = Pipe()
             p.standardOutput = out
-            p.standardError = FileHandle.nullDevice
+            let err = Pipe()
+            p.standardError = err
             p.standardInput = FileHandle.nullDevice
             do { try p.run() } catch { cont.resume(returning: nil); return }
             DispatchQueue.global(qos: .userInitiated).async {
@@ -124,9 +135,11 @@ enum TmuxSwitchClient {
                 let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 8, execute: killer)
                 let data = out.fileHandleForReading.readDataToEndOfFile()
+                let errData = err.fileHandleForReading.readDataToEndOfFile()
                 p.waitUntilExit()
                 killer.cancel()
-                cont.resume(returning: p.terminationStatus == 0 ? data : nil)
+                cont.resume(returning: Result(
+                    status: p.terminationStatus, out: data, err: String(decoding: errData, as: UTF8.self)))
             }
         }
     }
@@ -149,6 +162,15 @@ final class WindowSwitcher: ObservableObject {
     /// Omnity: the terminal's fonts (family, size, cell height), read when the panel opens.
     @Published private(set) var fonts = SwitcherFonts.system(size: 10.5)
 
+    /// Omnity: move-to-session picker, last result line, session names from `--sessions`.
+    @Published private(set) var picker: MovePicker?
+    @Published private(set) var notice: SwitcherNotice?
+    @Published private(set) var sessionNames: [String]?
+    /// Omnity: the picker or a context menu is open, or option was released while one was: the panel waits for enter/esc.
+    private var menuOpen = false
+    private var sticky = false
+    private var noticeWork: DispatchWorkItem?
+    private var swallowedUps = Set<UInt16>()
     private var monitor: Any?
     private var panel: SwitcherPanel?
     private var userMoved = false
@@ -180,6 +202,12 @@ final class WindowSwitcher: ObservableObject {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.cancel() }
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.menuOpen = true }
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.menuOpen = false }
         pollTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let self, NSApp.isActive, !self.visible else { return }
             self.refresh()
@@ -200,11 +228,11 @@ final class WindowSwitcher: ObservableObject {
             .subtracting([.capsLock, .numericPad, .function])
         switch event.type {
         case .flagsChanged:
-            if visible && !mods.contains(.option) { commit() }
+            if visible && !mods.contains(.option) { optionReleased() }
             return event
         case .keyUp:
-            // The release of a tab we swallowed.
-            return event.keyCode == Self.tab && (visible || mods.contains(.option)) ? nil : event
+            // The release of a key we swallowed.
+            return swallowedUps.remove(event.keyCode) != nil ? nil : event
         default:
             break
         }
@@ -214,6 +242,17 @@ final class WindowSwitcher: ObservableObject {
                   !host.isEmpty,
                   NSApp.keyWindow?.firstResponder is Ghostty.SurfaceView else { return event }
             open(backwards: mods.contains(.shift))
+            swallowedUps.insert(event.keyCode)
+            return nil
+        }
+        swallowedUps.insert(event.keyCode)
+        if picker != nil {
+            pickerKey(event, mods)
+            return nil
+        }
+        // Omnity: M (option held, cmd optional) moves the selected window to another session.
+        if event.charactersIgnoringModifiers?.lowercased() == "m", !mods.contains(.control) {
+            openPicker()
             return nil
         }
         switch event.keyCode {
@@ -232,6 +271,9 @@ final class WindowSwitcher: ObservableObject {
     private func open(backwards: Bool) {
         guard let window = NSApp.keyWindow else { return }
         userMoved = false
+        sticky = false
+        picker = nil
+        notice = nil
         self.backwards = backwards
         failed = false
         theme = (NSApp.delegate as? AppDelegate)?.ghostty.config.switcherTheme ?? .fallback
@@ -245,10 +287,11 @@ final class WindowSwitcher: ObservableObject {
         panel.present()
         loadPreview()
         refresh()
+        refreshSessionNames()
         // Option may be up already (a very quick tap); never get stuck open.
         heldTimer?.invalidate()
         let held = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            if self?.visible == true && !NSEvent.modifierFlags.contains(.option) { self?.commit() }
+            if self?.visible == true && !NSEvent.modifierFlags.contains(.option) { self?.optionReleased() }
         }
         RunLoop.main.add(held, forMode: .common)
         heldTimer = held
@@ -257,6 +300,7 @@ final class WindowSwitcher: ObservableObject {
     private func close() {
         guard visible else { return }
         visible = false
+        picker = nil
         previewWork?.cancel()
         panel?.dismiss()
         panel = nil
@@ -265,6 +309,10 @@ final class WindowSwitcher: ObservableObject {
     }
 
     func cancel() { close() }
+    /// Omnity: releasing option switches, except while the move picker or a menu is open.
+    private func optionReleased() {
+        if picker != nil || menuOpen { sticky = true } else if !sticky { commit() }
+    }
 
     func commit() {
         guard visible else { return }
@@ -293,9 +341,9 @@ final class WindowSwitcher: ObservableObject {
 
     // MARK: Data
 
-    func refresh() {
+    func refresh(force: Bool = false) {
         let host = self.host
-        guard !host.isEmpty, !refreshing else { return }
+        guard !host.isEmpty, force || !refreshing else { return }
         refreshing = true
         Task {
             let data = await TmuxSwitchClient.run(host: host, ["--json"])
@@ -310,10 +358,16 @@ final class WindowSwitcher: ObservableObject {
                 self.failed = false
                 self.loaded = true
                 // Once the user starts moving, the list stays as it is.
-                guard !self.visible || !self.userMoved else { return }
+                guard force || !self.visible || !self.userMoved else { return }
                 self.sessions = snapshot.sessions
                 self.current = snapshot.current?.window
-                if self.visible {
+                if force {
+                    // Omnity: after a move the selection stays on the same window.
+                    if self.visible, !self.entries.contains(where: { $0.id == self.selection }) {
+                        self.selection = self.initialSelection()
+                        self.loadPreview()
+                    }
+                } else if self.visible {
                     self.selection = self.initialSelection()
                     self.loadPreview()
                 }
@@ -343,6 +397,111 @@ final class WindowSwitcher: ObservableObject {
         }
     }
 
+    // MARK: Move to session
+    /// Omnity: sessions the window can move to (its own excluded).
+    func moveTargets(for id: String) -> [String] {
+        let from = entries.first { $0.id == id }?.session
+        let names = sessionNames ?? sessions.map(\.name)
+        return names.filter { $0 != from }
+    }
+    var pickerRows: [MoveRow] {
+        guard let p = picker else { return [] }
+        return MoveModel.rows(sessions: sessionNames ?? sessions.map(\.name), from: p.from, query: p.query)
+    }
+    func windowCount(session: String) -> Int? {
+        sessions.first { $0.name == session }?.windows.count
+    }
+    func refreshSessionNames() {
+        let host = self.host
+        guard !host.isEmpty else { return }
+        Task {
+            guard let data = await TmuxSwitchClient.run(host: host, ["--sessions"]) else { return }
+            let names = MoveModel.parseSessions(String(decoding: data, as: UTF8.self))
+            await MainActor.run { if !names.isEmpty { self.sessionNames = names } }
+        }
+    }
+    /// Opens the picker for the selected window, or for `id` (context menu).
+    func openPicker(for id: String? = nil) {
+        guard visible, let id = id ?? selection, let entry = entries.first(where: { $0.id == id }) else { return }
+        selection = id
+        picker = MovePicker(windowID: id, windowName: entry.window.name, from: entry.session)
+        notice = nil
+        refreshSessionNames()
+    }
+    func closePicker() { picker = nil }
+    func pickerChoose(_ row: MoveRow) {
+        guard let p = picker, !p.busy else { return }
+        move(p.windowID, to: row.name)
+    }
+    private func pickerKey(_ event: NSEvent, _ mods: NSEvent.ModifierFlags) {
+        guard var p = picker, !p.busy else { return }
+        let rows = pickerRows
+        switch event.keyCode {
+        case Self.escape:
+            picker = nil
+            return
+        case Self.enter, 76:
+            if rows.indices.contains(p.highlight) { pickerChoose(rows[p.highlight]) }
+            return
+        case Self.down, Self.up, Self.tab:
+            let delta = event.keyCode == Self.down || (event.keyCode == Self.tab && !mods.contains(.shift)) ? 1 : -1
+            if !rows.isEmpty { p.highlight = (p.highlight + delta + rows.count) % rows.count }
+        case 51: // delete
+            if !p.query.isEmpty { p.query.removeLast() }
+            p.highlight = 0
+            p.error = nil
+        default:
+            guard !mods.contains(.command), !mods.contains(.control) else { return }
+            // Only shift counts, so option+letter still types the letter.
+            let typed = event.characters(byApplyingModifiers: mods.intersection(.shift)) ?? ""
+            for c in typed where MoveModel.isAllowedCharacter(c) && p.query.count < MoveModel.maxName {
+                p.query.append(c)
+                p.highlight = 0
+                p.error = nil
+            }
+        }
+        picker = p
+    }
+    /// Moves a window into `session` (created when missing), then refreshes the list.
+    func move(_ id: String, to session: String) {
+        let host = self.host
+        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        guard let args = MoveModel.command(window: id, session: session) else {
+            fail("Session names use letters, digits, - and _ (30 max)")
+            return
+        }
+        selection = id
+        if picker != nil { picker?.busy = true; picker?.error = nil }
+        let name = entry.window.name
+        Task {
+            let r = await TmuxSwitchClient.execute(host: host, args)
+            await MainActor.run {
+                guard let r, r.status == 0 else {
+                    self.fail(MoveModel.errorText(r?.err))
+                    return
+                }
+                self.picker = nil
+                self.showNotice(MoveModel.confirmation(window: name, to: session), isError: false)
+                self.refresh(force: true)
+                self.refreshSessionNames()
+            }
+        }
+    }
+    private func fail(_ message: String) {
+        if picker != nil {
+            picker?.busy = false
+            picker?.error = message
+        } else {
+            showNotice(message, isError: true)
+        }
+    }
+    private func showNotice(_ text: String, isError: Bool) {
+        noticeWork?.cancel()
+        notice = SwitcherNotice(text: text, isError: isError)
+        let work = DispatchWorkItem { [weak self] in self?.notice = nil }
+        noticeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isError ? 6 : 3), execute: work)
+    }
     // MARK: Preview
 
     /// Shows the cached text at once, then refreshes it (debounced).

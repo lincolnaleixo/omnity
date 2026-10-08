@@ -64,6 +64,55 @@ struct WindowSwitcherTests {
         #expect(WindowSwitcherModel.clean("\u{1B}[31mred\u{1B}[0m\n\n  \n\u{1B}[0m\n") == "\u{1B}[31mred\u{1B}[0m")
     }
 
+    // MARK: Move to session (Omnity)
+    @Test func sessionNameValidation() {
+        for ok in ["a", "ecommerce", "lln-2", "A_b-9", String(repeating: "x", count: 30)] {
+            #expect(MoveModel.isValidName(ok), "\(ok)")
+        }
+        for bad in ["", " ", "a b", "a.b", "a:b", "x;rm", "$(id)", "é", "a\nb", String(repeating: "x", count: 31)] {
+            #expect(!MoveModel.isValidName(bad), "\(bad)")
+        }
+    }
+    @Test func moveCommand() {
+        #expect(MoveModel.command(window: "@12", session: "ecommerce") == ["--move", "@12", "ecommerce"])
+        #expect(MoveModel.command(window: "12", session: "ecommerce") == nil)
+        #expect(MoveModel.command(window: "@1;ls", session: "ecommerce") == nil)
+        #expect(MoveModel.command(window: "@1", session: "a b") == nil)
+        #expect(MoveModel.command(window: "@1", session: "") == nil)
+    }
+    @Test func parsesSessions() {
+        #expect(MoveModel.parseSessions("lln\necommerce\n\n  yt  \nlln\n_stash\nbad name\n") == ["lln", "ecommerce", "yt"])
+        #expect(MoveModel.parseSessions("lln\r\nyt\r\n") == ["lln", "yt"])
+        #expect(MoveModel.parseSessions("").isEmpty)
+    }
+    @Test func pickerRows() {
+        let all = ["lln", "ecommerce", "yt", "ecom2"]
+        // own session excluded, order kept
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "").map(\.name) == ["ecommerce", "yt", "ecom2"])
+        // prefix before contains, create row last
+        let r = MoveModel.rows(sessions: all, from: "lln", query: "ecom")
+        #expect(r.map(\.name) == ["ecommerce", "ecom2", "ecom"])
+        #expect(r.map(\.kind) == [.existing, .existing, .create])
+        // an exact match is not offered as a new session
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "yt").map(\.kind) == [.existing])
+        // neither is the window's own session
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "lln").isEmpty)
+        // invalid text never creates
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "a b").isEmpty)
+        // nothing else exists
+        #expect(MoveModel.rows(sessions: ["lln"], from: "lln", query: "").isEmpty)
+        #expect(MoveModel.rows(sessions: ["lln"], from: "lln", query: "new").map(\.kind) == [.create])
+    }
+    @Test func flatItems() throws {
+        let items = WindowSwitcherModel.items(try snapshot().sessions)
+        #expect(items.map(\.id) == ["h:a", "@2", "@1", "h:b", "@3"])
+    }
+    @Test func moveMessages() {
+        #expect(MoveModel.confirmation(window: "lln", to: "ecommerce") == "Moved lln \u{2192} ecommerce")
+        #expect(MoveModel.errorText("  can't find window @9\n") == "can't find window @9")
+        #expect(MoveModel.errorText(nil) == "Move failed")
+        #expect(MoveModel.errorText("  \n") == "Move failed")
+    }
     // MARK: ANSI
 
     static let p = AnsiTheme.fallback.palette

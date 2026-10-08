@@ -25,11 +25,35 @@ struct WindowSwitcherView: View {
                     }
                 }
                 .padding(14)
-                Text("\u{2325}\u{21E5} next    \u{21E7}\u{2325}\u{21E5} back    esc cancel")
+                footer
                     .font(.system(size: 10.5))
-                    .foregroundColor(.white.opacity(0.35))
+                    .frame(height: 14)
                     .padding(.bottom, 9)
             }
+        }
+        // Omnity: move-to-session picker over the panel.
+        .overlay {
+            if let picker = switcher.picker {
+                ZStack {
+                    Color.black.opacity(0.3).onTapGesture { switcher.closePicker() }
+                    MovePickerView(switcher: switcher, picker: picker)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.1), value: switcher.picker != nil)
+    }
+    /// The key hints, or the result of the last move.
+    @ViewBuilder private var footer: some View {
+        if let notice = switcher.notice {
+            Text(notice.text)
+                .foregroundColor(notice.isError
+                    ? Color(red: 0xf7 / 255, green: 0x76 / 255, blue: 0x8e / 255)
+                    : SwitcherColors.state("busy"))
+                .lineLimit(1)
+        } else {
+            Text("\u{2325}\u{21E5} next    \u{21E7}\u{2325}\u{21E5} back    \u{2318}M move    esc cancel")
+                .foregroundColor(.white.opacity(0.35))
         }
     }
 }
@@ -65,12 +89,16 @@ private struct SwitcherList: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(switcher.sessions, id: \.name) { session in
-                            Text(WindowSwitcherModel.header(session))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.45))
-                                .padding(.leading, 10).padding(.top, 10).padding(.bottom, 3)
-                            ForEach(session.windows) { window in
+                        // Omnity: one flat list (header rows and window rows), so a window that
+                        // moves to another session keeps one row identity and redraws correctly.
+                        ForEach(WindowSwitcherModel.items(switcher.sessions)) { item in
+                            switch item.kind {
+                            case .header(let session):
+                                Text(WindowSwitcherModel.header(session))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.45))
+                                    .padding(.leading, 10).padding(.top, 10).padding(.bottom, 3)
+                            case .window(let window):
                                 SwitcherRow(
                                     window: window,
                                     selected: window.id == switcher.selection,
@@ -78,6 +106,7 @@ private struct SwitcherList: View {
                                     .id(window.id)
                                     .contentShape(Rectangle())
                                     .onTapGesture { switcher.choose(window.id) }
+                                    .contextMenu { moveMenu(window.id) }
                             }
                         }
                     }
@@ -85,12 +114,27 @@ private struct SwitcherList: View {
                 .clipped()
                 .onAppear { reveal(proxy, animated: false) }
                 .onChange(of: switcher.selection) { _ in reveal(proxy, animated: true) }
+                .onChange(of: switcher.sessions) { _ in reveal(proxy, animated: false) }
             }
         }
     }
 }
 
 extension SwitcherList {
+    /// Omnity: right click on a row. "Move to" lists the sessions, "New session…" opens the picker.
+    @ViewBuilder fileprivate func moveMenu(_ id: String) -> some View {
+        let targets = switcher.moveTargets(for: id)
+        Menu("Move to") {
+            if targets.isEmpty {
+                Text("No other sessions")
+            } else {
+                ForEach(targets, id: \.self) { name in
+                    Button(name) { switcher.move(id, to: name) }
+                }
+            }
+        }
+        Button("New session\u{2026}") { switcher.openPicker(for: id) }
+    }
     /// Scrolls the selected row into view (centered when it was off screen).
     fileprivate func reveal(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let id = switcher.selection else { return }
