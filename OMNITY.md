@@ -12,7 +12,7 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   there too. Cmd+click works inside tmux (no shift needed).
 - `macos-window-switcher-host = omni` (default; `off` disables): hold Option and press Tab to open a
   cmd+tab style panel of the tmux windows on that host (grouped by session, state dot, last lines of the
-  selected window); Tab or Shift+Tab move, releasing Option switches, Esc cancels. Data comes from
+  selected window, in the terminal colors via tmux-switch --preview ... --ansi); Tab or Shift+Tab move, releasing Option switches, Esc cancels. Data comes from
   `/home/robot/.local/bin/tmux-switch` over ssh (own ControlMaster, `~/.ssh/omnity-switch-%C`); the key is
   swallowed in a local event monitor only when a terminal is focused (no Accessibility permission needed).
   Code in `macos/Sources/Features/Window Switcher/`.

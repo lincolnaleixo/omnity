@@ -167,9 +167,7 @@ private struct SwitcherPreview: View {
                 let fit = max(1, Int((geo.size.height - 20) / Self.lineHeight))
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(all.suffix(fit).enumerated()), id: \.offset) { _, line in
-                        Text(line.isEmpty ? " " : line)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.82))
+                        Text(AnsiText.attributed(line, theme: switcher.theme, size: 10.5))
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .frame(height: Self.lineHeight, alignment: .leading)
@@ -178,7 +176,7 @@ private struct SwitcherPreview: View {
                 .padding(10)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .bottomLeading)
             }
-            .background(Color.black.opacity(0.3))
+            .background(switcher.theme.bg.color.opacity(0.9))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

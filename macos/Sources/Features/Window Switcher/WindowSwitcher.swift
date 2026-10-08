@@ -82,13 +82,12 @@ enum WindowSwitcherModel {
         return parts.joined(separator: " · ")
     }
 
-    /// Plain text for the preview: no escape sequences, no trailing blanks.
+    /// Text for the preview: SGR sequences stay (AnsiParser reads them), no trailing blank lines.
     static func clean(_ text: String) -> String {
-        let stripped = text.replacingOccurrences(
-            of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
-        var lines = stripped.replacingOccurrences(of: "\t", with: "    ")
-            .components(separatedBy: "\n")
-        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        var lines = text.components(separatedBy: "\n")
+        while let last = lines.last, AnsiParser.parse(last).allSatisfy({ $0.text.allSatisfy(\.isWhitespace) }) {
+            lines.removeLast()
+        }
         return lines.joined(separator: "\n")
     }
 }
@@ -145,6 +144,8 @@ final class WindowSwitcher: ObservableObject {
     @Published private(set) var loaded = false
     @Published private(set) var failed = false
     @Published private(set) var preview: String?
+    /// Omnity: the terminal's colors, read when the panel opens.
+    @Published private(set) var theme = AnsiTheme.fallback
 
     private var monitor: Any?
     private var panel: SwitcherPanel?
@@ -231,6 +232,7 @@ final class WindowSwitcher: ObservableObject {
         userMoved = false
         self.backwards = backwards
         failed = false
+        theme = (NSApp.delegate as? AppDelegate)?.ghostty.config.switcherTheme ?? .fallback
         selection = initialSelection()
         let panel = SwitcherPanel(over: window, switcher: self)
         self.panel = panel
@@ -352,7 +354,7 @@ final class WindowSwitcher: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             Task {
-                let data = await TmuxSwitchClient.run(host: host, ["--preview", id, "30"])
+                let data = await TmuxSwitchClient.run(host: host, ["--preview", id, "30", "--ansi"])
                 await MainActor.run {
                     guard let data else { return }
                     let text = WindowSwitcherModel.clean(String(decoding: data, as: UTF8.self))
