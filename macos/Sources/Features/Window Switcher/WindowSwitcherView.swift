@@ -42,6 +42,13 @@ struct WindowSwitcherView: View {
             }
         }
         .animation(.easeOut(duration: 0.1), value: switcher.picker != nil)
+        // Omnity: everything (the picker scrim too) stays inside the panel's rounded shape, with
+        // a faint hairline along the rounded edge only.
+        .clipShape(RoundedRectangle(cornerRadius: SwitcherPanel.cornerRadius, style: .circular))
+        .overlay(
+            RoundedRectangle(cornerRadius: SwitcherPanel.cornerRadius, style: .circular)
+                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                .allowsHitTesting(false))
     }
     /// The key hints, or the result of the last move.
     @ViewBuilder private var footer: some View {
@@ -121,7 +128,7 @@ private struct SwitcherList: View {
 }
 
 extension SwitcherList {
-    /// Omnity: right click on a row. "Move to" lists the sessions, "New session…" opens the picker.
+    /// Omnity: right click on a row. "Move to" lists the sessions, "New session…" opens the name field.
     @ViewBuilder fileprivate func moveMenu(_ id: String) -> some View {
         let targets = switcher.moveTargets(for: id)
         Menu("Move to") {
@@ -133,7 +140,7 @@ extension SwitcherList {
                 }
             }
         }
-        Button("New session\u{2026}") { switcher.openPicker(for: id) }
+        Button("New session\u{2026}") { switcher.openPicker(for: id, naming: true) }
     }
     /// Scrolls the selected row into view (centered when it was off screen).
     fileprivate func reveal(_ proxy: ScrollViewProxy, animated: Bool) {

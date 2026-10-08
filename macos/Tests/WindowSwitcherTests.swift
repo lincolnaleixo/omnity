@@ -87,21 +87,29 @@ struct WindowSwitcherTests {
     }
     @Test func pickerRows() {
         let all = ["lln", "ecommerce", "yt", "ecom2"]
-        // own session excluded, order kept
-        #expect(MoveModel.rows(sessions: all, from: "lln", query: "").map(\.name) == ["ecommerce", "yt", "ecom2"])
-        // prefix before contains, create row last
+        // own session excluded, order kept, "+ New session…" always last
+        let list = MoveModel.rows(sessions: all, from: "lln", query: "")
+        #expect(list.map(\.name) == ["ecommerce", "yt", "ecom2", ""])
+        #expect(list.map(\.kind) == [.existing, .existing, .existing, .prompt])
+        // typed new name first, then matches (prefix before contains), then the prompt
         let r = MoveModel.rows(sessions: all, from: "lln", query: "ecom")
-        #expect(r.map(\.name) == ["ecommerce", "ecom2", "ecom"])
-        #expect(r.map(\.kind) == [.existing, .existing, .create])
+        #expect(r.map(\.name) == ["ecom", "ecommerce", "ecom2", ""])
+        #expect(r.map(\.kind) == [.create, .existing, .existing, .prompt])
+        // enter after typing picks the first existing match, not the new name
+        #expect(MoveModel.defaultHighlight(r) == 1)
+        #expect(MoveModel.defaultHighlight(list) == 0)
         // an exact match is not offered as a new session
-        #expect(MoveModel.rows(sessions: all, from: "lln", query: "yt").map(\.kind) == [.existing])
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "yt").map(\.kind) == [.existing, .prompt])
         // neither is the window's own session
-        #expect(MoveModel.rows(sessions: all, from: "lln", query: "lln").isEmpty)
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "lln").map(\.kind) == [.prompt])
         // invalid text never creates
-        #expect(MoveModel.rows(sessions: all, from: "lln", query: "a b").isEmpty)
-        // nothing else exists
-        #expect(MoveModel.rows(sessions: ["lln"], from: "lln", query: "").isEmpty)
-        #expect(MoveModel.rows(sessions: ["lln"], from: "lln", query: "new").map(\.kind) == [.create])
+        #expect(MoveModel.rows(sessions: all, from: "lln", query: "a b").map(\.kind) == [.prompt])
+        // nothing else exists: only the prompt
+        #expect(MoveModel.rows(sessions: ["lln"], from: "lln", query: "").map(\.kind) == [.prompt])
+        let fresh = MoveModel.rows(sessions: ["lln"], from: "lln", query: "new")
+        #expect(fresh.map(\.kind) == [.create, .prompt])
+        #expect(MoveModel.defaultHighlight(fresh) == 0)
+        #expect(Set(r.map(\.id)).count == r.count)
     }
     @Test func flatItems() throws {
         let items = WindowSwitcherModel.items(try snapshot().sessions)
@@ -109,6 +117,7 @@ struct WindowSwitcherTests {
     }
     @Test func moveMessages() {
         #expect(MoveModel.confirmation(window: "lln", to: "ecommerce") == "Moved lln \u{2192} ecommerce")
+        #expect(MoveModel.confirmation(window: "lln", to: "fresh", created: true) == "Moved lln \u{2192} new session fresh")
         #expect(MoveModel.errorText("  can't find window @9\n") == "can't find window @9")
         #expect(MoveModel.errorText(nil) == "Move failed")
         #expect(MoveModel.errorText("  \n") == "Move failed")

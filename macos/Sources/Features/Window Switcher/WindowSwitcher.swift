@@ -405,7 +405,7 @@ final class WindowSwitcher: ObservableObject {
         return names.filter { $0 != from }
     }
     var pickerRows: [MoveRow] {
-        guard let p = picker else { return [] }
+        guard let p = picker, !p.naming else { return [] }
         return MoveModel.rows(sessions: sessionNames ?? sessions.map(\.name), from: p.from, query: p.query)
     }
     func windowCount(session: String) -> Int? {
@@ -420,35 +420,67 @@ final class WindowSwitcher: ObservableObject {
             await MainActor.run { if !names.isEmpty { self.sessionNames = names } }
         }
     }
-    /// Opens the picker for the selected window, or for `id` (context menu).
-    func openPicker(for id: String? = nil) {
+    /// Opens the picker for the selected window, or for `id` (context menu); `naming` goes straight to the new session name field.
+    func openPicker(for id: String? = nil, naming: Bool = false) {
         guard visible, let id = id ?? selection, let entry = entries.first(where: { $0.id == id }) else { return }
         selection = id
         picker = MovePicker(windowID: id, windowName: entry.window.name, from: entry.session)
+        picker?.naming = naming
         notice = nil
         refreshSessionNames()
     }
     func closePicker() { picker = nil }
     func pickerChoose(_ row: MoveRow) {
         guard let p = picker, !p.busy else { return }
+        if row.kind == .prompt {
+            // "+ New session…": the same field now takes the name.
+            picker?.naming = true
+            picker?.query = ""
+            picker?.error = nil
+            return
+        }
         move(p.windowID, to: row.name)
+    }
+    /// Enter in the new session name field.
+    private func submitName(_ p: MovePicker) {
+        if p.query.isEmpty {
+            picker?.error = "Type a session name"
+        } else if p.query == p.from {
+            picker?.error = "The window is already in \(p.from)"
+        } else {
+            move(p.windowID, to: p.query)
+        }
     }
     private func pickerKey(_ event: NSEvent, _ mods: NSEvent.ModifierFlags) {
         guard var p = picker, !p.busy else { return }
         let rows = pickerRows
         switch event.keyCode {
         case Self.escape:
-            picker = nil
+            if p.naming {
+                // Back to the list.
+                p.naming = false
+                p.query = ""
+                p.highlight = 0
+                p.error = nil
+                picker = p
+            } else {
+                picker = nil
+            }
             return
         case Self.enter, 76:
-            if rows.indices.contains(p.highlight) { pickerChoose(rows[p.highlight]) }
+            if p.naming {
+                submitName(p)
+            } else if rows.indices.contains(p.highlight) {
+                pickerChoose(rows[p.highlight])
+            }
             return
         case Self.down, Self.up, Self.tab:
             let delta = event.keyCode == Self.down || (event.keyCode == Self.tab && !mods.contains(.shift)) ? 1 : -1
             if !rows.isEmpty { p.highlight = (p.highlight + delta + rows.count) % rows.count }
         case 51: // delete
             if !p.query.isEmpty { p.query.removeLast() }
-            p.highlight = 0
+            p.highlight = p.naming ? 0 : MoveModel.defaultHighlight(
+                MoveModel.rows(sessions: sessionNames ?? sessions.map(\.name), from: p.from, query: p.query))
             p.error = nil
         default:
             guard !mods.contains(.command), !mods.contains(.control) else { return }
@@ -456,9 +488,10 @@ final class WindowSwitcher: ObservableObject {
             let typed = event.characters(byApplyingModifiers: mods.intersection(.shift)) ?? ""
             for c in typed where MoveModel.isAllowedCharacter(c) && p.query.count < MoveModel.maxName {
                 p.query.append(c)
-                p.highlight = 0
                 p.error = nil
             }
+            p.highlight = p.naming ? 0 : MoveModel.defaultHighlight(
+                MoveModel.rows(sessions: sessionNames ?? sessions.map(\.name), from: p.from, query: p.query))
         }
         picker = p
     }
@@ -473,6 +506,7 @@ final class WindowSwitcher: ObservableObject {
         selection = id
         if picker != nil { picker?.busy = true; picker?.error = nil }
         let name = entry.window.name
+        let created = !(sessionNames ?? sessions.map(\.name)).contains(session)
         Task {
             let r = await TmuxSwitchClient.execute(host: host, args)
             await MainActor.run {
@@ -481,7 +515,7 @@ final class WindowSwitcher: ObservableObject {
                     return
                 }
                 self.picker = nil
-                self.showNotice(MoveModel.confirmation(window: name, to: session), isError: false)
+                self.showNotice(MoveModel.confirmation(window: name, to: session, created: created), isError: false)
                 self.refresh(force: true)
                 self.refreshSessionNames()
             }
@@ -539,6 +573,21 @@ final class WindowSwitcher: ObservableObject {
 final class SwitcherPanel: NSPanel {
     private weak var anchor: NSWindow?
 
+    static let cornerRadius: CGFloat = 18
+
+    /// A stretchable rounded rectangle: only the corners are fixed.
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
+    }
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
@@ -559,12 +608,11 @@ final class SwitcherPanel: NSPanel {
         blur.material = .hudWindow
         blur.blendingMode = .behindWindow
         blur.state = .active
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = 18
-        blur.layer?.cornerCurve = .continuous
-        blur.layer?.masksToBounds = true
-        blur.layer?.borderWidth = 0.5
-        blur.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        // Omnity: the behind-window blur is drawn by the window server and ignores a layer
+        // corner radius (square corners and a hard edge showed through, and the shadow followed
+        // them). maskImage rounds the blur itself, so the window shape and its shadow are round.
+        // The hairline is drawn by the SwiftUI view, inside the same radius.
+        blur.maskImage = Self.roundedMask(radius: Self.cornerRadius)
         let host = NSHostingView(rootView: WindowSwitcherView(switcher: switcher))
         host.frame = blur.bounds
         host.autoresizingMask = [.width, .height]
@@ -591,6 +639,8 @@ final class SwitcherPanel: NSPanel {
         } completionHandler: { [weak self] in
             self?.invalidateShadow()
         }
+        // The shadow is computed from the window shape: redo it once the layout settles.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.invalidateShadow() }
     }
 
     func dismiss() {

@@ -6,10 +6,16 @@ import SwiftUI
 
 // MARK: - Model
 struct MoveRow: Equatable, Identifiable {
-    enum Kind: Equatable { case existing, create }
+    enum Kind: Equatable { case existing, create, prompt }
     var name: String
     var kind: Kind
-    var id: String { (kind == .create ? "+" : "=") + name }
+    var id: String {
+        switch kind {
+        case .existing: return "=" + name
+        case .create: return "+" + name
+        case .prompt: return "?new"
+        }
+    }
 }
 struct MovePicker: Equatable {
     var windowID: String
@@ -17,6 +23,8 @@ struct MovePicker: Equatable {
     var from: String
     var query = ""
     var highlight = 0
+    /// Omnity: the name field of a new session is open ("+ New session…" row or context menu).
+    var naming = false
     var busy = false
     var error: String?
 }
@@ -66,8 +74,9 @@ enum MoveModel {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { isValidName($0) && $0 != "_stash" && seen.insert($0).inserted }
     }
-    /// Picker rows: existing sessions other than the window's own that match the typed
-    /// text (exact, then prefix, then contains), then "create" when the text is a new valid name.
+    /// Picker rows: "New session "x"" first when the typed text is a new valid name, then the
+    /// existing sessions other than the window's own that match it (exact, then prefix, then
+    /// contains), then always the "+ New session…" row.
     static func rows(sessions: [String], from: String, query: String) -> [MoveRow] {
         let q = query.lowercased()
         let others = sessions.filter { $0 != from }
@@ -82,12 +91,18 @@ enum MoveModel {
             .sorted { ($0.rank, $0.i) < ($1.rank, $1.i) }
             .map { MoveRow(name: $0.s, kind: .existing) }
         if isValidName(query), !sessions.contains(query), query != from {
-            rows.append(MoveRow(name: query, kind: .create))
+            rows.insert(MoveRow(name: query, kind: .create), at: 0)
         }
+        rows.append(MoveRow(name: "", kind: .prompt))
         return rows
     }
-    static func confirmation(window: String, to session: String) -> String {
-        "Moved \(window) \u{2192} \(session)"
+    /// The first existing match, so enter after typing "ecom" moves to "ecommerce" and does
+    /// not create "ecom"; the create row only when nothing else matches.
+    static func defaultHighlight(_ rows: [MoveRow]) -> Int {
+        rows.firstIndex { $0.kind == .existing } ?? 0
+    }
+    static func confirmation(window: String, to session: String, created: Bool = false) -> String {
+        "Moved \(window) \u{2192} \(created ? "new session " : "")\(session)"
     }
     /// The message of a failed move, as the command printed it.
     static func errorText(_ stderr: String?) -> String {
@@ -110,14 +125,14 @@ struct MovePickerView: View {
             HStack(spacing: 5) {
                 Text("Move").foregroundColor(.white.opacity(0.5))
                 Text(picker.windowName).fontWeight(.semibold).foregroundColor(.white).lineLimit(1)
-                Text("to\u{2026}").foregroundColor(.white.opacity(0.5))
+                Text(picker.naming ? "to a new session" : "to\u{2026}").foregroundColor(.white.opacity(0.5))
             }
             .font(.system(size: 13))
             field
-            if rows.isEmpty {
-                Text(picker.query.isEmpty ? "No other sessions. Type a name to create one." : "Letters, digits, - and _ (30 max)")
+            if picker.naming {
+                Text("Letters, digits, - and _ (30 max)")
                     .font(.system(size: 11.5)).foregroundColor(.white.opacity(0.45))
-                    .padding(.horizontal, 4).frame(height: Self.rowHeight, alignment: .leading)
+                    .padding(.horizontal, 4)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
@@ -136,12 +151,12 @@ struct MovePickerView: View {
                 }
             }
             if picker.busy {
-                Text("Moving\u{2026}").font(.system(size: 11.5)).foregroundColor(.white.opacity(0.55))
+                Text(picker.naming ? "Creating\u{2026}" : "Moving\u{2026}").font(.system(size: 11.5)).foregroundColor(.white.opacity(0.55))
             } else if let error = picker.error {
                 Text(error).font(.system(size: 11.5)).foregroundColor(red)
                     .lineLimit(3).fixedSize(horizontal: false, vertical: true)
             }
-            Text("\u{2191}\u{2193} choose    \u{21A9} move    esc back")
+            Text(picker.naming ? "\u{21A9} create and move    esc back" : "\u{2191}\u{2193} choose    \u{21A9} move    esc back")
                 .font(.system(size: 10.5)).foregroundColor(.white.opacity(0.35))
         }
         .padding(14)
@@ -158,7 +173,7 @@ struct MovePickerView: View {
             Text(picker.query).font(.system(size: 13)).foregroundColor(.white).lineLimit(1)
             Rectangle().fill(Color.accentColor).frame(width: 1.5, height: 15)
             if picker.query.isEmpty {
-                Text("  Search or type a new name").font(.system(size: 13)).foregroundColor(.white.opacity(0.35))
+                Text(picker.naming ? "  session name" : "  Search or type a new name").font(.system(size: 13)).foregroundColor(.white.opacity(0.35))
             }
             Spacer(minLength: 0)
         }
@@ -183,6 +198,11 @@ struct MovePickerView: View {
                 Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.6))
                 Text("New session \u{201C}\(row.name)\u{201D}")
                     .font(.system(size: 13)).foregroundColor(.white).lineLimit(1)
+                Spacer(minLength: 0)
+            case .prompt:
+                Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.6))
+                Text("New session\u{2026}")
+                    .font(.system(size: 13)).foregroundColor(.white.opacity(0.85)).lineLimit(1)
                 Spacer(minLength: 0)
             }
         }

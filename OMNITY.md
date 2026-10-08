@@ -16,7 +16,8 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   `/home/robot/.local/bin/tmux-switch` over ssh (own ControlMaster, `~/.ssh/omnity-switch-%C`); the key is
   swallowed in a local event monitor only when a terminal is focused (no Accessibility permission needed).
   Press M (cmd+M or just M while Option is held) to move the selected window to another session (picker with
-  the existing sessions and a field for a new name; also right-click a row: Move to, New session...), via
+  the existing sessions and always a "+ New session..." row that opens a name field (Enter creates and moves; typing a
+  new name also shows it first); also right-click a row: Move to, New session...), via
   `tmux-switch --sessions` and `--move @id session`; the panel waits for Enter or Esc while the picker is open.
   Code in `macos/Sources/Features/Window Switcher/`.
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
