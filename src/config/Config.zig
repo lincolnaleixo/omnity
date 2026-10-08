@@ -3571,6 +3571,19 @@ keybind: Keybinds = .{},
 /// The default is `omni`.
 @"macos-window-switcher-host": ?[:0]const u8 = "omni",
 
+/// Omnity: show a slim tab bar with one tab per tmux session at the top of a
+/// window whose terminal is attached to tmux on `macos-window-switcher-host`.
+/// cmd+1...9 switch to session 1...9 in those windows (ctrl+cmd+1...9 jump to
+/// the native tab); other windows keep Ghostty's tab keys.
+///
+/// The default is true.
+@"macos-tmux-session-tabs": bool = true,
+
+/// Omnity: order of the session tabs, comma separated, for example
+/// `ecom,youtube,personal,tools`. Listed sessions come first in that order,
+/// the rest follow alphabetically. Empty means alphabetical.
+@"macos-tmux-session-order": ?[:0]const u8 = null,
+
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application

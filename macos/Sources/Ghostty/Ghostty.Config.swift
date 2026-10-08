@@ -486,6 +486,25 @@ extension Ghostty {
             return String(cString: ptr)
         }
 
+        /// Omnity: session tab bar for tmux windows.
+        var macosTmuxSessionTabs: Bool {
+            guard let config = self.config else { return false }
+            var v = true
+            let key = "macos-tmux-session-tabs"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return v
+        }
+
+        /// Omnity: comma separated session names that go first in the tab bar.
+        var macosTmuxSessionOrder: String {
+            guard let config = self.config else { return "" }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-tmux-session-order"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))),
+                  let ptr = v else { return "" }
+            return String(cString: ptr)
+        }
+
         /// Omnity: the terminal font settings (families, size, styles, features, cell
         /// adjustments) that the window switcher preview draws with.
         var omnityFont: SwitcherFontConfig { SwitcherFontConfig(config: config) }

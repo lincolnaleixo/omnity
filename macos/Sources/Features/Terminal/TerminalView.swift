@@ -79,6 +79,9 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         DebugBuildWarningView()
                     }
 
+                    // Omnity: tmux session tabs (only in windows attached to tmux).
+                    SessionTabsBar(config: ghostty.config, surface: lastFocusedSurface?.value)
+
                     TerminalSplitTreeView(
                         tree: viewModel.surfaceTree,
                         action: { delegate?.performSplitAction($0) })

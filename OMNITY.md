@@ -20,6 +20,13 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   new name also shows it first); also right-click a row: Move to, New session...), via
   `tmux-switch --sessions` and `--move @id session`; the panel waits for Enter or Esc while the picker is open.
   Code in `macos/Sources/Features/Window Switcher/`.
+- `macos-tmux-session-tabs = true` (default) and `macos-tmux-session-order = ecom,youtube,personal,tools`: a slim tab bar
+  under the titlebar of a window whose foreground process is `ssh <macos-window-switcher-host>` (and tmux has a client):
+  one tab per tmux session (listed ones first, then alphabetical, never MRU), window count, busy/bg dots, a yellow badge
+  with the number of waiting windows, hover card with the windows. Click or cmd+1...9 switches session (only in those
+  windows; ctrl+cmd+1...9 jump to the native tab, cmd+shift+[ / ] stay native); right-click: Rename session, New window,
+  Close session (confirm). Uses the switcher's data (`WindowSwitcher.shared`, `TmuxSwitchClient`) and the host's
+  `tmux-switch --session | --rename | --new-window | --kill-session`. Code in `macos/Sources/Features/Session Tabs/`.
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).
 

@@ -576,7 +576,8 @@ final class SwitcherPanel: NSPanel {
     static let cornerRadius: CGFloat = 18
 
     /// A stretchable rounded rectangle: only the corners are fixed.
-    private static func roundedMask(radius: CGFloat) -> NSImage {
+    /// Omnity: internal, the session tabs hover card uses it too.
+    static func roundedMask(radius: CGFloat) -> NSImage {
         let edge = radius * 2 + 1
         let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
             NSColor.black.setFill()
