@@ -757,11 +757,22 @@ extension Ghostty {
                    view.openImageViewer(Ghostty.Action.OpenURL(c: action.action.open_url)) {
                     return true
                 }
-                // Omnity: scheme-less links that start with a domain open as https.
+                // Omnity: web links, including scheme-less domains, open as
+                // https and joined with the lines a CLI wrapped them onto.
                 let link = Ghostty.Action.OpenURL(c: action.action.open_url)
-                if link.kind != .osc8, let web = BareLink.webURL(link.url) {
-                    NSWorkspace.shared.open(web)
-                    return true
+                if link.kind != .osc8,
+                   link.url.hasPrefix("http://") || link.url.hasPrefix("https://")
+                    || BareLink.webURL(link.url) != nil {
+                    if target.tag == GHOSTTY_TARGET_SURFACE,
+                       let surface = target.target.surface,
+                       let view = surfaceView(from: surface) {
+                        DispatchQueue.main.async { view.openWebLink(link.url) }
+                        return true
+                    }
+                    if let web = BareLink.webURL(link.url) {
+                        NSWorkspace.shared.open(web)
+                        return true
+                    }
                 }
                 return openURL(action.action.open_url)
 
