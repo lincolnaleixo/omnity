@@ -3563,6 +3563,14 @@ keybind: Keybinds = .{},
 /// The default is false.
 @"macos-dictation": bool = false,
 
+/// Omnity: the ssh host running tmux whose windows option+tab switches
+/// between, like cmd+tab. The host needs `tmux-switch` in
+/// `/home/robot/.local/bin`; calls reuse one ssh connection (ControlPersist).
+/// The value `off` turns the switcher off.
+///
+/// The default is `omni`.
+@"macos-window-switcher-host": ?[:0]const u8 = "omni",
+
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application

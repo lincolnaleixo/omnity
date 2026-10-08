@@ -212,8 +212,10 @@ class AppDelegate: NSObject,
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Omnity: hold right Option to dictate; install new releases.
+        // Omnity: hold right Option to dictate; option+tab switches tmux windows;
+        // install new releases.
         Dictation.shared.install()
+        WindowSwitcher.shared.install()
         OmnityUpdater.shared.start()
 
         // System settings overrides

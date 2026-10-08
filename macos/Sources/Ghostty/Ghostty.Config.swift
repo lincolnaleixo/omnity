@@ -476,6 +476,16 @@ extension Ghostty {
             return v
         }
 
+        /// Omnity: ssh host whose tmux windows option+tab switches between.
+        var macosWindowSwitcherHost: String {
+            guard let config = self.config else { return "off" }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-window-switcher-host"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))),
+                  let ptr = v else { return "off" }
+            return String(cString: ptr)
+        }
+
         var macosRemoteDrop: Bool {
             guard let config = self.config else { return false }
             var v = false
