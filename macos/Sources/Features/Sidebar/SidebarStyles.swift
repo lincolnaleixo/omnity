@@ -776,7 +776,9 @@ struct CommandView: View {
     private func kv(_ c: SBUnitContext) -> some View {
         var rows: [(String, String)] = []
         rows.append(("stage", [c.stage, c.kind].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")))
-        if let w = store.derived.panel.workingHere { rows.append(("working on", w.title)) }
+        if let w = store.derived.panel.workingHere {
+            rows.append(("working on", w.title + (store.derived.panel.workingQuestion.map { " \u{00B7} \($0)" } ?? "")))
+        }
         if !c.goal.isEmpty { rows.append(("goal", c.goal)) }
         for k in c.kpis { rows.append((k.label.lowercased(), "\(k.value)  \(k.note)")) }
         if let b = c.blueprint, let h = b.health {
