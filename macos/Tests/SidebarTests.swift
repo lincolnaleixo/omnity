@@ -98,6 +98,37 @@ struct SidebarTests {
         #expect(SidebarLogic.dueNow(ts, unit: nil, today: "2026-10-09", now: "11:20").map(\.id) == ["a"])
     }
 
+    // MARK: In progress (doing)
+    @Test func decodesDoingBeforeAndAfterTheServerSendsIt() throws {
+        func decode(_ extra: String) throws -> SBTask {
+            try JSONDecoder().decode(SBTask.self, from: Data(#"{"id": "t1", "unit": "omni", "title": "x", "notes": ""\#(extra)}"#.utf8))
+        }
+        let old = try decode("")
+        #expect(old.doing == nil && !old.doingStale)
+        let live = try decode(#", "doing": "ecom/lln", "doingStale": false"#)
+        #expect(live.doing == "ecom/lln" && !live.doingStale)
+        let stale = try decode(#", "doing": "tools/omnity", "doingStale": true"#)
+        #expect(stale.doing == "tools/omnity" && stale.doingStale)
+        #expect(try decode(#", "doing": null"#).doing == nil)
+        #expect(try decode(#", "doing": "   ""#).doing == nil)
+        #expect(try decode(#", "doing": 5, "doingStale": "yes""#).doing == nil)   // wrong types never break the list
+    }
+    @Test func nowBlock() {
+        func w(_ id: String, _ name: String, _ state: String) -> TmuxWindow {
+            TmuxWindow(id: id, index: 1, name: name, state: state, title: "", path: "/", command: "claude", activity: nil, last_used: nil, active: false)
+        }
+        let sessions = [TmuxSession(name: "ecom", windows: [w("@1", "lln", "busy")]), TmuxSession(name: "tools", windows: [w("@3", "omnity", "idle")])]
+        func doing(_ id: String, _ unit: String, _ at: String, stale: Bool = false) -> SBTask {
+            SBTask(id: id, unit: unit, title: id, doing: at, doingStale: stale)
+        }
+        let ts = [doing("old", "omni", "tools/omnity", stale: true), doing("a", "longlifenutri", "ecom/lln"), doing("gone", "omni", "x/y"), task("plain")]
+        let all = SidebarLogic.now(ts, unit: nil, sessions: sessions)
+        #expect(all.map(\.id) == ["a", "gone", "old"])            // live first, stale last
+        #expect(all[0].windowID == "@1" && all[0].state == "busy" && !all[0].stale)
+        #expect(all[1].windowID == nil)                             // a window tmux does not list: no jump
+        #expect(all[2].state == "stale" && all[2].stale)
+        #expect(SidebarLogic.now(ts, unit: "omni", sessions: sessions).map(\.id) == ["gone", "old"])
+    }
     // MARK: Agents
 
     @Test func waitingWindows() {

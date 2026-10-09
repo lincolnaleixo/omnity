@@ -34,13 +34,50 @@ private struct SBRows: View {
 
     var body: some View {
         if tasks.isEmpty {
-            SBEmpty()
+            // Placeholders until the first data (cache or refresh) is in, so nothing flashes "Nothing here.".
+            if store.ready { SBEmpty() } else { SBSkelRows(count: 2) }
         } else {
             VStack(alignment: .leading, spacing: gap) {
-                ForEach(tasks) { SBTaskRow(store: store, task: $0, spec: spec, showUnit: showUnit, showHist: showHist) }
+                ForEach(tasks) { t in
+                    SBTaskRow(store: store, task: t, info: store.rowInfo(t), spec: spec, showUnit: showUnit, showHist: showHist).equatable()
+                }
             }
         }
     }
+}
+
+/// The Now block: tasks an agent works on, each with its tmux window (click or ⌥N jumps there; stale ones are grey).
+private struct SBNowList: View {
+    @ObservedObject var store: SidebarStore
+    let style: SidebarStyle
+    var spacing: CGFloat = 0
+    var body: some View {
+        VStack(spacing: spacing) {
+            ForEach(Array(store.nowItems.enumerated()), id: \.element.id) { i, n in
+                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, muted: n.stale)
+            }
+        }
+    }
+}
+
+/// "This window is working on <task>" under the header of a unit view.
+private struct SBWorkingHere: View {
+    let task: SBTask
+    var size: CGFloat = 14
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            SBDot(color: SB.busy, size: 7, pulse: true)
+            (Text("This window is working on ") + Text(task.title).fontWeight(.semibold).foregroundColor(SB.t1))
+                .font(.system(size: SB.fs(size))).foregroundColor(SB.t2).lineLimit(2)
+        }
+    }
+}
+
+/// "Nothing here" once data is in, a placeholder before.
+private struct SBPending: View {
+    @ObservedObject var store: SidebarStore
+    let text: String
+    var body: some View { if store.ready { SBEmpty(text: text) } else { SBSkelRows(count: 1, rowHeight: SB.u(40)) } }
 }
 
 private struct SBBlueprintList: View {
@@ -70,7 +107,7 @@ struct EditorialView: View {
         let unit = store.unit
         let order: [String] = unit == nil
             ? ids(store, "ov", L.overdue) + ids(store, "td", L.today)
-            : ids(store, "td", L.overdue + L.today) + ids(store, "op", L.open)
+            : ids(store, "nd", store.derived.needsTasks) + ids(store, "op", L.open)
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 top
@@ -116,6 +153,7 @@ struct EditorialView: View {
             Text(store.dateTitle).font(SB.serif(SB.u(46), italic: true)).foregroundColor(SB.t2)
         }
         lede(n: n, overdue: L.overdue.count).padding(.top, SB.u(14)).padding(.bottom, SB.u(18))
+        nowSection
         section("ag", "Waiting for you", "\(store.waiting.count)") {
             if store.waiting.isEmpty { SBEmpty(text: "Nobody is waiting.") } else {
                 VStack(spacing: 0) { ForEach(store.waiting) { SBAgentRow(store: store, agent: $0, style: .editorial) } }
@@ -124,9 +162,15 @@ struct EditorialView: View {
         section("ov", "Overdue", "\(L.overdue.count)") { rows(capped(L.overdue, 25), unit: true, hist: false) }
         section("td", "Today", "\(L.today.count)") { rows(L.today, unit: true, hist: false) }
         section("ev", "Calendar", "\(store.todaysEvents.count)") {
-            if store.todaysEvents.isEmpty { SBEmpty(text: "No events today.") } else {
+            if store.todaysEvents.isEmpty { SBPending(store: store, text: "No events today.") } else {
                 VStack(spacing: 0) { ForEach(store.todaysEvents) { SBEventRow(event: $0, style: .editorial, past: SidebarLogic.eventTime($0.end) <= store.nowHM) } }
             }
+        }
+    }
+
+    @ViewBuilder private var nowSection: some View {
+        if !store.nowItems.isEmpty {
+            section("now", "Now", "\(store.nowItems.count)") { SBNowList(store: store, style: .editorial) }
         }
     }
 
@@ -154,31 +198,35 @@ struct EditorialView: View {
                 Text([c.kind, c.type].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")).foregroundColor(SB.t2)
             }
             .font(.system(size: SB.fs(13.5))).padding(.top, 10)
+            if let w = store.derived.workingHere { SBWorkingHere(task: w, size: 13.5).padding(.top, 10) }
             if !c.goal.isEmpty {
                 Text(c.goal).font(SB.serif(SB.u(21), italic: true)).foregroundColor(Color(red: 0.87, green: 0.89, blue: 0.97))
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 12)
             }
             if !c.kpis.isEmpty { kpis(c.kpis) }
+        } else {
+            if let w = store.derived.workingHere { SBWorkingHere(task: w, size: 13.5).padding(.top, 10) }
+            if store.contextLoading {
+                VStack(alignment: .leading, spacing: 10) {
+                    SBSkel(height: SB.u(22), width: SB.u(200))
+                    SBSkel(height: SB.u(24))
+                    SBSkel(height: SB.u(62), radius: 8)
+                }
+                .padding(.top, 14)
+            }
         }
-        let here = store.waitingHere, due = store.dueNow
-        section("ag", "Needs you", "\(here.count + due.count)") {
-            if here.isEmpty && due.isEmpty { SBEmpty(text: "Nothing needs you.") } else {
+        nowSection
+        let n = store.derived
+        section("nd", n.needsTitle, "\(n.needsAgents.count + n.needsTasks.count)") {
+            if n.needsAgents.isEmpty && n.needsTasks.isEmpty { SBPending(store: store, text: "Nothing due today.") } else {
                 VStack(spacing: 0) {
-                    ForEach(here) { SBAgentRow(store: store, agent: $0, style: .editorial) }
-                    ForEach(due) { t in
-                        HStack(spacing: 12) {
-                            SBDot(color: SB.wait)
-                            Text(SidebarLogic.time(t)).fontWeight(.semibold)
-                            Text(t.title).foregroundColor(SB.t2).lineLimit(1)
-                        }
-                        .font(.system(size: SB.fs(15))).padding(.vertical, 9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    ForEach(n.needsAgents) { SBAgentRow(store: store, agent: $0, style: .editorial) }
+                    if !n.needsTasks.isEmpty { rows(capped(n.needsTasks, 25), unit: false, hist: true) }
                 }
             }
         }
-        section("td", "Overdue and today", "\(L.overdue.count + L.today.count)") { rows(capped(L.overdue + L.today, 25), unit: false, hist: true) }
         if let b = c?.blueprint { section("bp", "Blueprint", b.health.map { "\($0) / 100" } ?? "") { blueprint(b) } }
+        else if c == nil && store.contextLoading { section("bp", "Blueprint", "") { SBSkelRows(count: 1, rowHeight: SB.u(110)) } }
         section("op", "Open", "\(L.open.count)") { rows(capped(L.open, 15), unit: false, hist: true) }
     }
 
@@ -195,7 +243,6 @@ struct EditorialView: View {
             }
         }
         .overlay(alignment: .top) { Rectangle().fill(SB.hair).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(SB.hair).frame(height: 1) }
         .padding(.top, SB.u(22)).padding(.bottom, SB.u(8))
     }
 
@@ -242,7 +289,7 @@ struct CardsView: View {
         let unit = store.unit
         let order: [String] = unit == nil
             ? ids(store, "ov", L.overdue) + ids(store, "td", L.today)
-            : ids(store, "td", L.overdue + L.today) + ids(store, "op", L.open)
+            : ids(store, "nd", store.derived.needsTasks) + ids(store, "op", L.open)
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: SB.u(14)) {
                 if unit == nil { today(L) } else { unitView(L) }
@@ -281,13 +328,22 @@ struct CardsView: View {
                    caption: "done", size: SB.u(104), gradient: false)
         }
         .padding(SB.u(24)).frame(maxWidth: .infinity, alignment: .leading).sbGlass(radius: SB.u(24))
+        nowCard
         card("ag", "Agents", "\(store.waiting.count) waiting") {
             VStack(spacing: 6) { ForEach(Array(store.agentsAll.prefix(5))) { SBAgentRow(store: store, agent: $0, style: .cards) } }
         }
         card("ov", "Overdue", "\(L.overdue.count)") { rows(capped(L.overdue, 25), unit: true, hist: false) }
         card("td", "Today", "\(L.today.count)") { rows(L.today, unit: true, hist: false) }
         card("ev", "Calendar", "\(store.todaysEvents.count)") {
-            VStack(spacing: 6) { ForEach(store.todaysEvents) { SBEventRow(event: $0, style: .cards, past: SidebarLogic.eventTime($0.end) <= store.nowHM) } }
+            if store.todaysEvents.isEmpty { SBPending(store: store, text: "No events today.") } else {
+                VStack(spacing: 6) { ForEach(store.todaysEvents) { SBEventRow(event: $0, style: .cards, past: SidebarLogic.eventTime($0.end) <= store.nowHM) } }
+            }
+        }
+    }
+
+    @ViewBuilder private var nowCard: some View {
+        if !store.nowItems.isEmpty {
+            card("now", "Now", "\(store.nowItems.count)") { SBNowList(store: store, style: .cards, spacing: 6) }
         }
     }
 
@@ -299,7 +355,11 @@ struct CardsView: View {
                 (Text([c.kind, c.type].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ") + " \u{00B7} ") + Text(c.stage).foregroundColor(SB.green))
                     .font(.system(size: SB.fs(15))).foregroundColor(SB.t2)
                 if !c.goal.isEmpty { Text(c.goal).font(.system(size: SB.fs(14))).foregroundColor(SB.t3).padding(.top, 6) }
+            } else if store.contextLoading {
+                SBSkel(height: SB.u(20), width: SB.u(220)).padding(.top, 2)
+                SBSkel(height: SB.u(20)).padding(.top, 4)
             }
+            if let w = store.derived.workingHere { SBWorkingHere(task: w).padding(.top, 6) }
         }
         .padding(SB.u(24)).frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) { SBStylePicker(store: store).padding(SB.u(18)) }
@@ -319,24 +379,20 @@ struct CardsView: View {
                 }
             }
         }
-        let here = store.waitingHere, due = store.dueNow
-        card("ag", "Needs you", "\(here.count + due.count)") {
-            if here.isEmpty && due.isEmpty { SBEmpty(text: "Nothing needs you.") } else {
+        if c == nil && store.contextLoading {
+            HStack(spacing: 10) { ForEach(0..<3, id: \.self) { _ in SBSkel(height: SB.u(96), radius: SB.u(20)) } }
+        }
+        nowCard
+        let n = store.derived
+        card("nd", n.needsTitle, "\(n.needsAgents.count + n.needsTasks.count)") {
+            if n.needsAgents.isEmpty && n.needsTasks.isEmpty { SBPending(store: store, text: "Nothing due today.") } else {
                 VStack(spacing: 6) {
-                    ForEach(here) { SBAgentRow(store: store, agent: $0, style: .cards) }
-                    ForEach(due) { t in
-                        HStack(spacing: 12) {
-                            Text(SidebarLogic.time(t)).monospacedDigit().foregroundColor(SB.t2)
-                            Text(t.title).lineLimit(1)
-                        }
-                        .font(.system(size: SB.fs(14.5))).padding(.horizontal, 12).padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(SB.wait.opacity(0.1)))
-                    }
+                    ForEach(n.needsAgents) { SBAgentRow(store: store, agent: $0, style: .cards) }
+                    if !n.needsTasks.isEmpty { rows(capped(n.needsTasks, 25), unit: false, hist: true) }
                 }
             }
         }
-        card("td", "Overdue and today", "\(L.overdue.count + L.today.count)") { rows(capped(L.overdue + L.today, 25), unit: false, hist: true) }
+        if c == nil && store.contextLoading { card("bp", "Blueprint", "") { SBSkelRows(count: 1, rowHeight: SB.u(110)) } }
         if let b = c?.blueprint {
             card("bp", "Blueprint", "\(b.implemented ?? 0)/\(b.total ?? 0)") {
                 VStack(alignment: .leading, spacing: 4) {
@@ -394,6 +450,12 @@ struct DayTimelineView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
                     let here = store.waitingHere
+                    if !store.nowItems.isEmpty {
+                        SBSection(store: store, id: "now", title: "Now", count: "\(store.nowItems.count)", style: .timeline) {
+                            SBNowList(store: store, style: .timeline)
+                        }
+                        .padding(.top, SB.u(14))
+                    }
                     SBSection(store: store, id: "ag", title: "Waiting for you", count: "\(here.count)", style: .timeline) {
                         if here.isEmpty { SBEmpty(text: "Nobody is waiting.") } else {
                             VStack(spacing: 0) { ForEach(here) { SBAgentRow(store: store, agent: $0, style: .timeline) } }
@@ -447,6 +509,7 @@ struct DayTimelineView: View {
                 Text("\(L.overdue.count + L.today.count) to do \u{00B7} \(L.overdue.count) overdue \u{00B7} \(store.waiting.count) agents waiting \u{00B7} \(store.doneCount) done")
                     .font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2)
             } else if let c {
+                if let w = store.derived.workingHere { SBWorkingHere(task: w, size: 14).padding(.top, 2) }
                 if !c.goal.isEmpty { Text(c.goal).font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2).lineLimit(2) }
                 HStack(spacing: SB.u(26)) {
                     ForEach(Array(c.kpis.prefix(3).enumerated()), id: \.offset) { _, k in
@@ -463,6 +526,12 @@ struct DayTimelineView: View {
                     }
                 }
                 .padding(.top, 8)
+            } else {
+                if let w = store.derived.workingHere { SBWorkingHere(task: w, size: 14).padding(.top, 2) }
+                if store.contextLoading {
+                    SBSkel(height: SB.u(20)).padding(.top, 2)
+                    SBSkel(height: SB.u(34), width: SB.u(260)).padding(.top, 6)
+                }
             }
         }
         .padding(.leading, SB.u(26)).padding(.trailing, SB.u(26)).padding(.top, SB.u(22)).padding(.bottom, SB.u(18))
@@ -636,21 +705,31 @@ struct CommandView: View {
     @ViewBuilder private func content(_ L: SidebarLogic.Lists) -> some View {
         let unit = store.unit
         let ags = unit == nil ? store.agentsAll : store.waitingHere
-        sec("ag", "Agents", unit == nil ? "\(store.waiting.count) waiting" : "waiting \(ags.count)", color: SB.wait, hint: "\u{2325}1-9 jump") {
+        let nn = store.nowItems.count
+        if nn > 0 {
+            sec("now", "Now", "\(nn)", color: SB.busy, hint: "\u{2325}1-9 jump") {
+                SBNowList(store: store, style: .command).padding(.horizontal, -SB.u(10))
+            }
+        }
+        sec("ag", "Agents", unit == nil ? "\(store.waiting.count) waiting" : "waiting \(ags.count)", color: SB.wait, hint: nn == 0 ? "\u{2325}1-9 jump" : nil) {
             if ags.isEmpty { SBEmpty(text: "Nobody is waiting.") } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(ags.enumerated()), id: \.element.id) { i, a in SBAgentRow(store: store, agent: a, style: .command, key: i < 9 ? i + 1 : nil) }
+                    ForEach(Array(ags.enumerated()), id: \.element.id) { i, a in SBAgentRow(store: store, agent: a, style: .command, key: nn + i < 9 ? nn + i + 1 : nil) }
                 }.padding(.horizontal, -SB.u(10))
             }
         }
         if unit != nil, let c = store.context {
             sec("in", "Unit", SidebarLogic.shortName(unit!)) { kv(c) }
+        } else if let u = unit, store.contextLoading {
+            sec("in", "Unit", SidebarLogic.shortName(u)) { SBSkelRows(count: 3, rowHeight: SB.u(20)) }
         }
         sec("ov", "Overdue", "\(L.overdue.count)", hint: "x done") { rows(capped(L.overdue, 25), hist: unit != nil) }
         sec("td", "Today", "\(L.today.count)") { rows(L.today, hist: unit != nil) }
         if unit == nil {
             sec("ev", "Calendar", "\(store.todaysEvents.count)") {
-                VStack(spacing: 0) { ForEach(store.todaysEvents) { SBEventRow(event: $0, style: .command, past: SidebarLogic.eventTime($0.end) <= store.nowHM) } }
+                if store.todaysEvents.isEmpty { SBPending(store: store, text: "No events today.") } else {
+                    VStack(spacing: 0) { ForEach(store.todaysEvents) { SBEventRow(event: $0, style: .command, past: SidebarLogic.eventTime($0.end) <= store.nowHM) } }
+                }
             }
         } else {
             if let b = store.context?.blueprint { sec("bp", "Blueprint next", "\(b.next.count)") { SBBlueprintList(items: b.next, size: 13, limit: 5) } }
@@ -661,6 +740,7 @@ struct CommandView: View {
     private func kv(_ c: SBUnitContext) -> some View {
         var rows: [(String, String)] = []
         rows.append(("stage", [c.stage, c.kind].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")))
+        if let w = store.derived.workingHere { rows.append(("working on", w.title)) }
         if !c.goal.isEmpty { rows.append(("goal", c.goal)) }
         for k in c.kpis { rows.append((k.label.lowercased(), "\(k.value)  \(k.note)")) }
         if let b = c.blueprint, let h = b.health {

@@ -15,9 +15,13 @@ struct SidebarContainer<Content: View>: View {
     let surface: Ghostty.SurfaceView?
     @ViewBuilder var content: Content
     @ObservedObject private var store = SidebarStore.shared
+    /// The tab bar's own signal: it publishes when a bar appears or goes, and with every tmux snapshot change.
+    @ObservedObject private var tabs = SessionTabs.shared
     @State private var attached = false
-    private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    @State private var detach: Task<Void, Never>?
 
+    /// The window is attached to tmux (the same test as the tab bar).
+    private var live: Bool { store.enabled && tabs.attached(surface) }
     private var show: Bool { store.enabled && store.shown && attached }
 
     var body: some View {
@@ -33,14 +37,20 @@ struct SidebarContainer<Content: View>: View {
         .onAppear {
             store.lastSurface = surface
             store.applyConfig(config.macosSidebarStyle)
-            attached = store.visible(for: surface)
+            attached = live
         }
         .onChange(of: surface) { store.lastSurface = $0 }
-        .onReceive(tick) { _ in
-            let now = store.visible(for: surface)
-            if now != attached { withAnimation(.smooth(duration: 0.35)) { attached = now } }
+        // No animation when it attaches (the panel is there at once). Its width stays reserved through a short
+        // loss of the attach signal (an ssh reconnect), so the terminal does not reflow back and forth.
+        .onChange(of: live) { now in
+            detach?.cancel()
+            if now { attached = true; return }
+            detach = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if !Task.isCancelled, !live { attached = false }
+            }
         }
-        .onChange(of: store.shown) { _ in withAnimation(.smooth(duration: 0.35)) { attached = store.visible(for: surface) } }
+        .onChange(of: store.shown) { _ in attached = live }
     }
 }
 
@@ -81,9 +91,12 @@ struct SidebarPanel: View {
         .modifier(PanelShell(glass: style != .cards))
         .background(SBFrameReader())
         .onAppear {
+            SBTiming.once("panel-shown", "content=\(!store.tasks.isEmpty)")
+            if !store.tasks.isEmpty { SBTiming.once("first-content") }
             store.panelAppeared()
             fonts = SwitcherFonts.resolve(config.omnityFont, backingScale: NSScreen.main?.backingScaleFactor ?? 2)
         }
+        .onChange(of: store.tasks.isEmpty) { empty in if !empty { SBTiming.once("first-content") } }
         .onDisappear { store.panelDisappeared() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Sidebar")

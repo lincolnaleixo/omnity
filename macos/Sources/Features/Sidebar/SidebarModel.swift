@@ -23,16 +23,22 @@ struct SBTask: Codable, Identifiable, Equatable {
     var rev: Int
     var order: Int?
     var subtasks: [SBSub]
+    /// Omnity: "session/window" of the agent working on the task (the server's `(doing: ...)` marker), nil = none.
+    /// Both fields are optional so the panel works before and after the server sends them.
+    var doing: String?
+    var doingStale = false
 
     enum CodingKeys: String, CodingKey {
-        case id, unit, group, title, notes, due, rev, order, subtasks
+        case id, unit, group, title, notes, due, rev, order, subtasks, doing, doingStale
         case repeatRule = "repeat"
     }
 
     init(id: String, unit: String, group: String? = nil, title: String, notes: String = "", due: String? = nil,
-         repeatRule: String? = nil, rev: Int = 1, order: Int? = nil, subtasks: [SBSub] = []) {
+         repeatRule: String? = nil, rev: Int = 1, order: Int? = nil, subtasks: [SBSub] = [],
+         doing: String? = nil, doingStale: Bool = false) {
         self.id = id; self.unit = unit; self.group = group; self.title = title; self.notes = notes
         self.due = due; self.repeatRule = repeatRule; self.rev = rev; self.order = order; self.subtasks = subtasks
+        self.doing = doing; self.doingStale = doingStale
     }
 
     init(from d: Decoder) throws {
@@ -47,6 +53,9 @@ struct SBTask: Codable, Identifiable, Equatable {
         rev = try c.decodeIfPresent(Int.self, forKey: .rev) ?? 0
         order = try c.decodeIfPresent(Int.self, forKey: .order)
         subtasks = try c.decodeIfPresent([SBSub].self, forKey: .subtasks) ?? []
+        let d = try? c.decodeIfPresent(String.self, forKey: .doing)
+        doing = d.flatMap { $0 }.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        doingStale = (try? c.decodeIfPresent(Bool.self, forKey: .doingStale)) ?? false
     }
 }
 
@@ -114,6 +123,11 @@ struct SBHistory: Equatable {
     var text: String
 }
 
+extension SBNow {
+    /// The row the agent lists draw (windowID is empty when the window is not in tmux's snapshot: no jump).
+    var agent: SBAgent { SBAgent(key: label, windowID: windowID ?? "", query: task.title, age: age, state: state) }
+}
+
 enum SBDueKind: Equatable { case none, overdue, today, later }
 
 struct SBDue: Equatable {
@@ -129,6 +143,17 @@ struct SBAgent: Equatable, Identifiable {
     var age: String
     var state: String
     var id: String { key }
+}
+
+/// A task an agent is working on, with the tmux window it runs in (nil when the window is not in the snapshot).
+struct SBNow: Equatable, Identifiable {
+    var task: SBTask
+    var label: String       // "session/window"
+    var windowID: String?
+    var state: String       // tmux state, "stale" when the marker is stale or the window is unknown
+    var stale: Bool
+    var age: String
+    var id: String { task.id }
 }
 
 // MARK: - Styles
@@ -206,12 +231,16 @@ enum SidebarLogic {
         return String(d.dropFirst(11).prefix(5))
     }
 
+    private static let utc: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+
     private static func ordinal(_ ymd: String) -> Int? {
         let p = ymd.split(separator: "-").compactMap { Int($0) }
         guard p.count == 3 else { return nil }
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = TimeZone(identifier: "UTC")!
-        guard let d = c.date(from: DateComponents(year: p[0], month: p[1], day: p[2])) else { return nil }
+        guard let d = utc.date(from: DateComponents(year: p[0], month: p[1], day: p[2])) else { return nil }
         return Int(d.timeIntervalSince1970 / 86400)
     }
 
@@ -249,6 +278,25 @@ enum SidebarLogic {
         l.today.sort { (time($0).isEmpty ? "99" : time($0)) < (time($1).isEmpty ? "99" : time($1)) }
         l.open.sort { ($0.due ?? "9") < ($1.due ?? "9") }
         return l
+    }
+
+    /// Tasks an agent is working on (`doing` set), of one unit or all, in list order.
+    static func doing(_ tasks: [SBTask], unit: String?) -> [SBTask] {
+        tasks.filter { $0.doing != nil && (unit == nil || $0.unit == unit) }
+    }
+
+    /// The in-progress tasks with their windows: live ones first, stale ones (marker stale) last.
+    static func now(_ tasks: [SBTask], unit: String?, sessions: [TmuxSession], at: Date = Date()) -> [SBNow] {
+        let rows: [SBNow] = doing(tasks, unit: unit).compactMap { t in
+            guard let label = t.doing else { return nil }
+            let parts = label.split(separator: "/", maxSplits: 1).map(String.init)
+            let w = parts.count == 2
+                ? sessions.first { $0.name == parts[0] }?.windows.first { $0.name == parts[1] } : nil
+            let stale = t.doingStale
+            return SBNow(task: t, label: label, windowID: w?.id, state: stale ? "stale" : (w?.state ?? "idle"), stale: stale,
+                         age: w.map { age(since: $0.activity, now: at) } ?? "")
+        }
+        return rows.filter { !$0.stale } + rows.filter(\.stale)
     }
 
     /// Tasks due today at or before `now` ("HH:mm"): what needs Lincoln right now.

@@ -147,13 +147,22 @@ struct SBDot: View {
     var size: CGFloat = 8
     var pulse = false
     @State private var on = false
+    @Environment(\.controlActiveState) private var active
     var body: some View {
         Circle().fill(color).frame(width: size, height: size)
             .background(Circle().stroke(color.opacity(on ? 0 : 0.6), lineWidth: on ? 6 : 0).frame(width: size, height: size))
-            .onAppear {
-                guard pulse else { return }
-                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { on = true }
-            }
+            .onAppear { update() }
+            .onChange(of: active) { _ in update() }
+            .onChange(of: pulse) { _ in update() }
+    }
+
+    /// The pulse runs only while the panel's window is key (an endless animation costs a redraw every frame).
+    private func update() {
+        if pulse && active == .key {
+            withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { on = true }
+        } else {
+            withAnimation(.linear(duration: 0)) { on = false }
+        }
     }
 }
 
@@ -272,22 +281,28 @@ struct SBRowSpec {
     var gap: CGFloat = 13
 }
 
-struct SBTaskRow: View {
-    @ObservedObject var store: SidebarStore
+/// Takes values, not the store: it redraws only when its task or its `info` changes (see `.equatable()`).
+struct SBTaskRow: View, Equatable {
+    let store: SidebarStore
     let task: SBTask
+    let info: SBRowInfo
     let spec: SBRowSpec
     var showUnit = false
     var showHist = false
     @State private var hover = false
 
+    static func == (a: SBTaskRow, b: SBTaskRow) -> Bool {
+        a.task == b.task && a.info == b.info && a.showUnit == b.showUnit && a.showHist == b.showHist
+    }
+
     var body: some View {
-        let open = store.expanded.contains(task.id)
-        let doing = store.completing.contains(task.id)
-        let sel = store.selection == task.id
+        let open = info.open
+        let doing = info.completing
+        let sel = info.selected
         let subs = task.subtasks
         let sd = subs.filter(\.done).count
-        let hist = SidebarLogic.history(task.notes)
-        let due = SidebarLogic.due(task, today: store.today)
+        let hist = info.hist
+        let due = info.due
         HStack(alignment: .top, spacing: SB.u(spec.gap)) {
             SBCheck(size: SB.u(spec.check), done: doing) { store.complete(task.id) }
                 .padding(.top, spec.inline ? 1 : 0)
@@ -308,7 +323,7 @@ struct SBTaskRow: View {
         .onHover { hover = $0 }
         .onTapGesture { store.toggleExpanded(task.id) }
         .opacity(doing ? 0.6 : 1)
-        .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
+        .transition(.asymmetric(insertion: .identity, removal: .move(edge: .trailing).combined(with: .opacity)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(task.title)
     }
@@ -341,8 +356,15 @@ struct SBTaskRow: View {
                 .frame(width: inline ? SB.u(58) : nil, alignment: .leading)
             }
             if !due.label.isEmpty || inline {
-                Text(due.label).foregroundColor(due.kind == .overdue ? SB.red : (due.kind == .today ? SB.wait : SB.t2)).lineLimit(1)
-                    .frame(width: inline ? SB.u(84) : nil, alignment: .leading)
+                HStack(spacing: 5) {
+                    if info.dueNow { Circle().fill(SB.wait).frame(width: 6, height: 6) }
+                    Text(due.label).fontWeight(info.dueNow ? .semibold : .regular).lineLimit(1)
+                }
+                .foregroundColor(due.kind == .overdue ? SB.red : (due.kind == .today ? SB.wait : SB.t2))
+                .frame(width: inline ? SB.u(84) : nil, alignment: .leading)
+            }
+            if !inline, let d = task.doing {
+                Text("\u{25CF} \(d)").foregroundColor(task.doingStale ? SB.t4 : SB.busy).lineLimit(1)
             }
             if !inline, let r = task.repeatRule {
                 Text("\u{21BB} \(r.split(separator: ":").first.map(String.init) ?? r)").foregroundColor(SB.t3).lineLimit(1)
@@ -408,7 +430,7 @@ struct SBTaskRow: View {
                 VStack(alignment: .leading, spacing: 3) { ForEach(Array(hist.enumerated()), id: \.offset) { _, h in histLine(h, lineLimit: nil) } }
                     .padding(.top, task.subtasks.isEmpty ? 0 : 6)
             }
-            if store.noteFor == task.id { NoteField(store: store).padding(.top, 4) }
+            if info.noting { NoteField(store: store).padding(.top, 4) }
             HStack(spacing: 8) {
                 SBPillButton(title: "Open in Tally", kbd: "\u{23CE}", primary: true) { store.openInTally(task.id) }
                 SBPillButton(title: "Add note") { store.beginNote(task.id) }
@@ -441,8 +463,9 @@ struct NoteField: View {
 // MARK: - Sections
 
 struct SBSection<Content: View, Extra: View>: View {
-    @ObservedObject var store: SidebarStore
+    let store: SidebarStore
     let id: String
+    let collapsed: Bool
     let title: String
     let count: String
     var style: SidebarStyle = .editorial
@@ -453,12 +476,13 @@ struct SBSection<Content: View, Extra: View>: View {
 
     init(store: SidebarStore, id: String, title: String, count: String, style: SidebarStyle = .editorial, titleColor: Color? = nil,
          @ViewBuilder extra: () -> Extra, @ViewBuilder content: () -> Content) {
-        self.store = store; self.id = id; self.title = title; self.count = count; self.style = style
+        self.store = store; self.id = id; self.collapsed = store.collapsed.contains(id)
+        self.title = title; self.count = count; self.style = style
         self.titleColor = titleColor; self.extra = extra(); self.content = content()
     }
 
     var body: some View {
-        let col = store.collapsed.contains(id)
+        let col = collapsed
         VStack(alignment: .leading, spacing: 0) {
             Button { store.toggleSection(id) } label: {
                 HStack(spacing: 0) {
@@ -503,21 +527,23 @@ extension SBSection where Extra == EmptyView {
 // MARK: - Shared rows
 
 struct SBAgentRow: View {
-    @ObservedObject var store: SidebarStore
+    let store: SidebarStore
     let agent: SBAgent
     var style: SidebarStyle
     var key: Int?
+    /// A stale marker: grey dot and text.
+    var muted = false
     @State private var hover = false
     @Environment(\.sbMono) private var mono
 
     var body: some View {
         let compact = style == .command
         HStack(spacing: 10) {
-            SBDot(color: SB.stateColor(agent.state), size: compact ? 8 : 9, pulse: agent.state == "waiting")
+            SBDot(color: muted ? SB.t4 : SB.stateColor(agent.state), size: compact ? 8 : 9, pulse: agent.state == "waiting")
             if let key { Text("\(key)").foregroundColor(SB.t4).frame(width: 14, alignment: .leading) }
-            Text(agent.key).fontWeight(.semibold).lineLimit(1).fixedSize()
-            Text(agent.query).foregroundColor(SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-            Text(agent.age).foregroundColor(SB.t3).lineLimit(1)
+            Text(agent.key).fontWeight(.semibold).foregroundColor(muted ? SB.t3 : SB.t1).lineLimit(1).fixedSize()
+            Text(agent.query).foregroundColor(muted ? SB.t4 : SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text(muted ? "stale" : agent.age).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
         }
         .font(mono ?? .system(size: SB.fs(style == .editorial ? 15 : (style == .cards ? 14.5 : 13))))
         .foregroundColor(SB.t1)
@@ -536,7 +562,7 @@ struct SBAgentRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture { store.go(agent) }
-        .help("Go to \(agent.key)")
+        .help(agent.windowID.isEmpty ? agent.key : "Go to \(agent.key)")
     }
 }
 
@@ -607,16 +633,47 @@ struct SBStylePicker: View {
     }
 }
 
+/// A fixed-height placeholder while there is no cache yet (the real rows take the same room, so nothing jumps).
+struct SBSkel: View {
+    var height: CGFloat = 14
+    var width: CGFloat?
+    var radius: CGFloat = 6
+    @State private var dim = false
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous).fill(SB.t1.opacity(dim ? 0.06 : 0.14))
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true } }
+    }
+}
+
+/// `count` placeholder task rows.
+struct SBSkelRows: View {
+    var count = 3
+    var rowHeight: CGFloat = SB.u(58)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(0..<count, id: \.self) { _ in SBSkel(height: rowHeight, radius: 10) }
+        }
+    }
+}
+
 struct SBEmpty: View {
     var text = "Nothing here."
     var body: some View { Text(text).font(.system(size: SB.fs(14))).foregroundColor(SB.t3).padding(.vertical, 6) }
 }
 
 extension DateFormatter {
+    private static let lock = NSLock()
+    private static var cache: [String: DateFormatter] = [:]
+    /// One formatter per format (creating one costs far more than formatting with it).
     static func sb(_ f: String) -> DateFormatter {
+        lock.lock(); defer { lock.unlock() }
+        if let d = cache[f] { return d }
         let d = DateFormatter()
         d.locale = Locale(identifier: "en_US_POSIX")
         d.dateFormat = f
+        cache[f] = d
         return d
     }
 }

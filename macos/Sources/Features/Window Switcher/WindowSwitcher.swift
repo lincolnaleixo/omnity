@@ -355,16 +355,17 @@ final class WindowSwitcher: ObservableObject {
             await MainActor.run {
                 self.refreshing = false
                 self.lastRefresh = Date()
+                // Omnity: publish only what changed (the tab bars and the sidebar redraw on each publish).
                 guard let snapshot else {
-                    self.failed = true
+                    if !self.failed { self.failed = true }
                     return
                 }
-                self.failed = false
-                self.loaded = true
+                if self.failed { self.failed = false }
+                if !self.loaded { self.loaded = true }
                 // Once the user starts moving, the list stays as it is.
                 guard force || !self.visible || !self.userMoved else { return }
-                self.sessions = snapshot.sessions
-                self.current = snapshot.current?.window
+                if self.sessions != snapshot.sessions { self.sessions = snapshot.sessions }
+                if self.current != snapshot.current?.window { self.current = snapshot.current?.window }
                 if force {
                     // Omnity: after a move the selection stays on the same window.
                     if self.visible, !self.entries.contains(where: { $0.id == self.selection }) {

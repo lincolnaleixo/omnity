@@ -19,6 +19,55 @@ private struct SBCache: Codable {
     var eventsDay: String
     var units: [SBUnit]
     var contexts: [String: SBUnitContext]
+    var unitsAt: Date?
+    var savedAt: Date?
+}
+
+/// What the views read, computed once per data change (not in view bodies).
+struct SBDerived: Equatable {
+    var unit: String?
+    var lists = SidebarLogic.Lists()
+    var waiting: [SBAgent] = []
+    var waitingHere: [SBAgent] = []
+    var agentsAll: [SBAgent] = []
+    /// The Now block: tasks an agent is working on.
+    var nowItems: [SBNow] = []
+    /// The in-progress task of the current window (its `doing` equals this window), if any.
+    var workingHere: SBTask?
+    var dueNowIDs = Set<String>()
+    /// The merged "Needs you" / "Today" section of the unit view: waiting agents, then in-progress, overdue and today tasks.
+    var needsTitle = "Today"
+    var needsAgents: [SBAgent] = []
+    var needsTasks: [SBTask] = []
+    var todaysEvents: [SBEvent] = []
+}
+
+/// Everything a task row shows that depends on the store, as one comparable value (rows are Equatable).
+struct SBRowInfo: Equatable {
+    var open = false
+    var completing = false
+    var selected = false
+    var noting = false
+    var dueNow = false
+    var due = SBDue(label: "", kind: .none)
+    var hist: [SBHistory] = []
+}
+
+/// Omnity: timing marks for the panel (time to first content, refresh duration). With
+/// `OMNITY_SIDEBAR_TIMING=<file>` each mark is also appended to that file (test builds).
+enum SBTiming {
+    private static var t0 = Date()
+    private static var seen = Set<String>()
+    static func start() { t0 = Date() }
+    static func mark(_ name: String, _ extra: String = "") {
+        let ms = Int(Date().timeIntervalSince(t0) * 1000)
+        let line = "sidebar-timing \(name) +\(ms)ms \(extra)\n"
+        NSLog("%@", line)
+        if let path = ProcessInfo.processInfo.environment["OMNITY_SIDEBAR_TIMING"], let d = line.data(using: .utf8) {
+            if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(d); try? h.close() } else { try? d.write(to: URL(fileURLWithPath: path)) }
+        }
+    }
+    static func once(_ name: String, _ extra: String = "") { if seen.insert(name).inserted { mark(name, extra) } }
 }
 
 @MainActor
@@ -28,10 +77,15 @@ final class SidebarStore: ObservableObject {
     static let styleKey = "omnity.sidebar.style"
     static let shownKey = "omnity.sidebar.shown"
 
-    @Published private(set) var tasks: [SBTask] = []
-    @Published private(set) var events: [SBEvent] = []
-    @Published private(set) var units: [SBUnit] = []
+    @Published private(set) var tasks: [SBTask] = [] { didSet { rebuild() } }
+    @Published private(set) var events: [SBEvent] = [] { didSet { rebuild() } }
+    @Published private(set) var units: [SBUnit] = [] { didSet { unitIDs = Set(units.map(\.id)); rebuild() } }
     @Published private(set) var contexts: [String: SBUnitContext] = [:]
+    @Published private(set) var derived = SBDerived()
+    /// True once there is something to show: cached tasks, or the first refresh has finished (else the views show skeletons).
+    @Published private(set) var ready = false
+    /// The current unit's context is being read and none is cached yet.
+    @Published private(set) var contextLoading = false
     @Published private(set) var offline = false
     @Published private(set) var now = Date()
     @Published private(set) var style: SidebarStyle
@@ -53,8 +107,18 @@ final class SidebarStore: ObservableObject {
     private var head = 0
     private var eventsDay = ""
     private var refreshing = false
+    private var refreshAgain = false
+    private var failures = 0
     private var unitsAt = Date.distantPast
     private var contextAt: [String: Date] = [:]
+    private var contextInFlight = Set<String>()
+    private var saveWork: DispatchWorkItem?
+    private var dueCache: [String: (due: String?, value: SBDue)] = [:]
+    private var histCache: [String: (notes: String, hist: [SBHistory])] = [:]
+    private var dueDay = ""
+    private(set) var today = SidebarLogic.dayString(Date())
+    private(set) var nowHM = SidebarLogic.timeString(Date())
+    private(set) var unitIDs = Set<String>()
     private var panels = 0
     private var undoStack: [(original: SBTask, next: SBTask?)] = []
     private var toastWork: DispatchWorkItem?
@@ -77,59 +141,103 @@ final class SidebarStore: ObservableObject {
 
     // MARK: Derived
 
-    var today: String { SidebarLogic.dayString(now) }
-    var nowHM: String { SidebarLogic.timeString(now) }
-    var unitIDs: Set<String> { Set(units.map(\.id)) }
-
     var currentWindow: (session: String, window: TmuxWindow)? {
         guard let id = switcher.current else { return nil }
         for s in switcher.sessions { if let w = s.windows.first(where: { $0.id == id }) { return (s.name, w) } }
         return nil
     }
     /// The unit of the current tmux window, nil = Today mode.
-    var unit: String? {
-        guard let w = currentWindow else { return nil }
-        return SidebarLogic.unit(forWindow: w.window.name, units: unitIDs)
-    }
+    var unit: String? { derived.unit }
     var unitTitle: String? { unit.flatMap { u in units.first { $0.id == u }?.title ?? contexts[u]?.title } }
     var context: SBUnitContext? { unit.flatMap { contexts[$0] } }
-    var lists: SidebarLogic.Lists { SidebarLogic.lists(tasks, unit: unit, today: today) }
+    var lists: SidebarLogic.Lists { derived.lists }
     func titleOf(_ unit: String) -> String { units.first { $0.id == unit }?.title ?? unit }
 
-    /// Every window that is not idle, waiting first (what the command style lists, and what ⌥1...9 jump to).
-    var agentsAll: [SBAgent] {
+    /// Every window that is not idle, waiting first (what the command style lists).
+    var agentsAll: [SBAgent] { derived.agentsAll }
+    var waiting: [SBAgent] { derived.waiting }
+    /// Waiting windows of the current unit's window.
+    var waitingHere: [SBAgent] { derived.waitingHere }
+    var nowItems: [SBNow] { derived.nowItems }
+    var todaysEvents: [SBEvent] { derived.todaysEvents }
+
+    /// Window ids ⌥1...9 jump to, aligned with the numbers on screen: the Now block first, then (command style) the agents.
+    var jumpTargets: [String?] {
+        let nowIDs: [String?] = nowItems.map(\.windowID)
+        guard style == .command else { return nowIDs }
+        return nowIDs + (unit == nil ? agentsAll : waitingHere).map { Optional($0.windowID) }
+    }
+
+    /// Recomputes `derived` from tasks, units, events, the switcher snapshot and the clock.
+    private func rebuild() {
+        var d = SBDerived()
+        let sessions = switcher.sessions
+        d.unit = currentWindow.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: unitIDs) }
+        d.lists = SidebarLogic.lists(tasks, unit: d.unit, today: today)
+        d.waiting = SidebarLogic.agents(sessions, now: now)
+        d.waitingHere = d.unit == nil ? d.waiting : d.waiting.filter { a in
+            SidebarLogic.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs) == d.unit
+        }
         let rank = ["waiting": 0, "busy": 1, "bg": 2, "stale": 3]
-        let all: [SBAgent] = switcher.sessions.flatMap { s in
+        let all: [SBAgent] = sessions.flatMap { s in
             s.windows.compactMap { w in
                 guard rank[w.state ?? "idle"] != nil else { return nil }
                 return SBAgent(key: "\(s.name):\(w.name)", windowID: w.id, query: (w.title ?? "").isEmpty ? (w.state ?? "") : w.title!,
                                age: SidebarLogic.age(since: w.activity, now: now), state: w.state ?? "idle")
             }
         }
-        return all.enumerated().sorted { a, b in
+        d.agentsAll = all.enumerated().sorted { a, b in
             let (x, y) = (rank[a.element.state] ?? 9, rank[b.element.state] ?? 9)
             return x != y ? x < y : a.offset < b.offset
         }.map(\.element)
-    }
-    var waiting: [SBAgent] { SidebarLogic.agents(switcher.sessions, now: now) }
-    /// Waiting windows of the current unit's window.
-    var waitingHere: [SBAgent] {
-        guard let u = unit else { return waiting }
-        return waiting.filter { a in
-            SidebarLogic.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs) == u
+        d.nowItems = SidebarLogic.now(tasks, unit: d.unit, sessions: sessions, at: now)
+        if let w = currentWindow {
+            d.workingHere = SidebarLogic.doing(tasks, unit: nil).first { $0.doing == "\(w.session)/\(w.window.name)" && !$0.doingStale }
         }
+        d.dueNowIDs = Set(SidebarLogic.dueNow(tasks, unit: d.unit, today: today, now: nowHM).map(\.id))
+        let doing = SidebarLogic.doing(tasks, unit: d.unit), skip = Set(doing.map(\.id))
+        d.needsAgents = d.waitingHere
+        d.needsTitle = d.waitingHere.isEmpty ? "Today" : "Needs you"
+        d.needsTasks = doing + d.lists.overdue.filter { !skip.contains($0.id) } + d.lists.today.filter { !skip.contains($0.id) }
+        d.todaysEvents = events.filter { !$0.allDay }.sorted { $0.start < $1.start }
+        if d != derived { derived = d }
+        updateContextLoading()
     }
-    var dueNow: [SBTask] { SidebarLogic.dueNow(tasks, unit: unit, today: today, now: nowHM) }
-    var jumpList: [SBAgent] { unit == nil ? agentsAll : waitingHere }
 
-    var todaysEvents: [SBEvent] {
-        events.filter { !$0.allDay }.sorted { $0.start < $1.start }
+    private func setNow(_ n: Date) {
+        let hm = SidebarLogic.timeString(n)
+        guard hm != nowHM else { return }
+        now = n
+        nowHM = hm
+        today = SidebarLogic.dayString(n)
+        rebuild()
+    }
+
+    /// What a task row needs from the store; due labels and history are parsed once per task change.
+    func rowInfo(_ t: SBTask) -> SBRowInfo {
+        if dueDay != today { dueDay = today; dueCache = [:] }
+        var i = SBRowInfo()
+        i.open = expanded.contains(t.id)
+        i.completing = completing.contains(t.id)
+        i.selected = selection == t.id
+        i.noting = noteFor == t.id
+        i.dueNow = derived.dueNowIDs.contains(t.id)
+        if let c = dueCache[t.id], c.due == t.due { i.due = c.value } else {
+            i.due = SidebarLogic.due(t, today: today)
+            dueCache[t.id] = (t.due, i.due)
+        }
+        if let c = histCache[t.id], c.notes == t.notes { i.hist = c.hist } else {
+            i.hist = SidebarLogic.history(t.notes)
+            histCache[t.id] = (t.notes, i.hist)
+        }
+        return i
     }
 
     // MARK: Install
 
     func install() {
         guard monitor == nil else { return }
+        SBTiming.start()
         loadCache()
         // Test builds: OMNITY_SIDEBAR_DEMO=expand:<id> or complete:<id> acts on a task a few seconds after launch.
         if let demo = ProcessInfo.processInfo.environment["OMNITY_SIDEBAR_DEMO"], let sep = demo.firstIndex(of: ":") {
@@ -138,12 +246,17 @@ final class SidebarStore: ObservableObject {
                 if verb == "expand" { self?.toggleExpanded(id) } else if verb == "complete" { self?.complete(id) }
             }
         }
-        switcher.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.objectWillChange.send()
-                self?.ensureContext()
-            }
-        }.store(in: &bag)
+        // Only a real change of the tmux snapshot redraws the panel.
+        Publishers.CombineLatest(switcher.$sessions, switcher.$current)
+            .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.rebuild()
+                    self?.ensureContext()
+                    self?.prefetchContexts()
+                }
+            }.store(in: &bag)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .leftMouseDown]) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) ?? event }
         }
@@ -203,46 +316,68 @@ final class SidebarStore: ObservableObject {
             guard let data = try? Data(contentsOf: url), let c = try? JSONDecoder().decode(SBCache.self, from: data) else { return }
             await MainActor.run {
                 guard self.tasks.isEmpty else { return }
-                self.head = c.head; self.tasks = c.tasks; self.units = c.units; self.contexts = c.contexts
+                self.units = c.units; self.contexts = c.contexts
+                self.tasks = c.tasks
+                // A cache older than a day may miss deletions the server no longer lists: that one refreshes in full.
+                self.head = Date().timeIntervalSince(c.savedAt ?? .distantPast) < 86_400 ? c.head : 0
+                self.unitsAt = c.unitsAt ?? .distantPast
                 if c.eventsDay == SidebarLogic.dayString(Date()) { self.events = c.events; self.eventsDay = c.eventsDay }
-                self.head = 0   // a cache is for a quick first paint; the first refresh is complete
+                if !c.tasks.isEmpty { self.ready = true }
+                SBTiming.mark("cache-loaded", "tasks=\(c.tasks.count) head=\(self.head)")
             }
         }
     }
 
+    /// Writes the cache a moment after the last change (several contexts arrive together), off the main thread.
     private func saveCache() {
-        let c = SBCache(head: head, tasks: tasks, events: events, eventsDay: eventsDay, units: units, contexts: contexts)
-        let url = cacheURL
-        Task.detached(priority: .utility) {
-            if let data = try? JSONEncoder().encode(c) { try? data.write(to: url, options: .atomic) }
+        saveWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let c = SBCache(head: head, tasks: tasks, events: events, eventsDay: eventsDay, units: units, contexts: contexts,
+                            unitsAt: unitsAt == .distantPast ? nil : unitsAt, savedAt: Date())
+            let url = cacheURL
+            Task.detached(priority: .utility) {
+                if let data = try? JSONEncoder().encode(c) { try? data.write(to: url, options: .atomic) }
+            }
         }
+        saveWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: w)
     }
 
+    /// Reads tasks, events and (when stale) units at the same time; the unit context starts at once beside them.
+    /// The tmux snapshot is the switcher's own (it polls); nothing here asks for it again.
     func refresh() {
-        guard !refreshing else { return }
+        guard !refreshing else { refreshAgain = true; return }
         refreshing = true
-        now = Date()
-        switcher.refresh()
+        let began = Date()
+        setNow(Date())
+        ensureContext(force: true)
+        prefetchContexts()
+        let since = tasks.isEmpty ? 0 : head
+        let needUnits = units.isEmpty || Date().timeIntervalSince(unitsAt) > 600
+        let day = SidebarLogic.dayString(Date())
         Task {
+            async let tasksResult = try? await SidebarClient.tasks(since: since)
+            async let eventsResult = try? await SidebarClient.events(day: day)
+            async let unitsResult: [SBUnit]? = needUnits ? (try? await SidebarClient.units()) : nil
             var ok = true
-            if Date().timeIntervalSince(unitsAt) > 600 || units.isEmpty {
-                if let u = try? await SidebarClient.units() { units = u; unitsAt = Date() } else { ok = false }
+            if needUnits {
+                if let u = await unitsResult { units = u; unitsAt = Date() } else { ok = false }
             }
-            do {
-                let r = try await SidebarClient.tasks(since: head)
-                applyChanges(r)
-            } catch { ok = false }
-            let day = SidebarLogic.dayString(Date())
-            if let e = try? await SidebarClient.events(day: day) { events = e; eventsDay = day }
-            offline = !ok
+            if let r = await tasksResult { applyChanges(r, since: since) } else { ok = false }
+            if let e = await eventsResult { events = e; eventsDay = day }
+            if ok { failures = 0; offline = false } else { failures += 1; if failures >= 2 { offline = true } }
+            ready = true
             refreshing = false
+            SBTiming.mark("refresh-done", "\(Int(Date().timeIntervalSince(began) * 1000))ms tasks=\(tasks.count) delta=\(since != 0)")
             saveCache()
             ensureContext(force: true)
+            if refreshAgain { refreshAgain = false; refresh() }
         }
     }
 
-    private func applyChanges(_ r: SBTasksResponse) {
-        if head == 0 {
+    private func applyChanges(_ r: SBTasksResponse, since: Int) {
+        if since == 0 {
             tasks = r.tasks
         } else {
             var byID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
@@ -257,14 +392,41 @@ final class SidebarStore: ObservableObject {
     func ensureContext(force: Bool = false) {
         guard panels > 0, let u = unit else { return }
         if let at = contextAt[u], Date().timeIntervalSince(at) < (force ? 120 : 1e9) { return }
+        fetchContext(u)
+    }
+
+    /// Reads the contexts of the other tmux windows' units that are not known yet, over the same ssh connection
+    /// (several run at once), so a switch of window already has its unit on screen.
+    func prefetchContexts() {
+        guard panels > 0 else { return }
+        for s in switcher.sessions {
+            for w in s.windows {
+                guard let u = SidebarLogic.unit(forWindow: w.name, units: unitIDs), contexts[u] == nil, contextAt[u] == nil else { continue }
+                fetchContext(u)
+            }
+        }
+    }
+
+    private func fetchContext(_ u: String) {
+        guard contextInFlight.insert(u).inserted else { return }
         contextAt[u] = Date()
+        updateContextLoading()
         let host = self.host
         Task {
-            if let c = await SidebarClient.unitContext(host: host, unit: u) {
+            let c = await SidebarClient.unitContext(host: host, unit: u)
+            contextInFlight.remove(u)
+            if let c {
+                SBTiming.once("context-first", u)
                 contexts[u] = c
                 saveCache()
             }
+            updateContextLoading()
         }
+    }
+
+    private func updateContextLoading() {
+        let loading = unit.map { contexts[$0] == nil && contextInFlight.contains($0) } ?? false
+        if loading != contextLoading { contextLoading = loading }
     }
 
     // MARK: Actions
@@ -315,7 +477,6 @@ final class SidebarStore: ObservableObject {
                 doneCount = max(0, doneCount - 1)
                 selection = last.next?.id ?? selection
             } catch { showToast("Could not undo") }
-            refreshing = false
             refresh()
         }
     }
@@ -369,7 +530,6 @@ final class SidebarStore: ObservableObject {
                 try await SidebarClient.addNote(id, text)
                 showToast("Note added")
             } catch { showToast("Could not add the note") }
-            refreshing = false
             refresh()
         }
     }
@@ -392,10 +552,13 @@ final class SidebarStore: ObservableObject {
         }
     }
 
-    func go(_ agent: SBAgent) {
+    func go(_ agent: SBAgent) { go(windowID: agent.windowID) }
+
+    func go(windowID: String) {
+        guard TmuxSwitchClient.isWindowID(windowID) else { return }
         let host = self.host
         Task {
-            _ = await TmuxSwitchClient.run(host: host, ["--go", agent.windowID])
+            _ = await TmuxSwitchClient.run(host: host, ["--go", windowID])
             try? await Task.sleep(nanoseconds: 400_000_000)
             switcher.refresh(force: true)
         }
@@ -440,10 +603,10 @@ final class SidebarStore: ObservableObject {
             return nil
         }
         guard panels > 0, shown else { return event }
-        // option+1...9 jumps to an agent's window.
-        if mods == .option, style == .command, let n = SessionTabsKeys.digits[event.keyCode] {
-            let list = jumpList
-            if list.indices.contains(n - 1) { go(list[n - 1]); swallowedUps.insert(event.keyCode); return nil }
+        // option+1...9 jumps to a window of the Now block (and, in the command style, to an agent's window).
+        if mods == .option, let n = SessionTabsKeys.digits[event.keyCode] {
+            let list = jumpTargets
+            if list.indices.contains(n - 1), let id = list[n - 1] { go(windowID: id); swallowedUps.insert(event.keyCode); return nil }
             return event
         }
         guard keysActive, !editing, mods.isEmpty || mods == .shift else { return event }

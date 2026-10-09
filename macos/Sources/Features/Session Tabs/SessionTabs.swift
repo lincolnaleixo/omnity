@@ -116,12 +116,13 @@ final class SessionTabs: ObservableObject {
     /// The tab clicked, shown as current until tmux confirms (or 2.5 s pass).
     @Published private(set) var optimistic: String?
     @Published private(set) var notice: String?
+    /// Omnity: tab bars on screen. It publishes when a bar appears or goes, which is also the sidebar's attach signal.
+    @Published private(set) var bars = 0
 
     private let switcher = WindowSwitcher.shared
     private var bag = Set<AnyCancellable>()
     private var monitor: Any?
     private var timer: Timer?
-    private var bars = 0
     private var swallowedUps = Set<UInt16>()
     private var noticeWork: DispatchWorkItem?
     private var optimisticWork: DispatchWorkItem?
