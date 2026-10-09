@@ -54,7 +54,7 @@ private struct SBNowList: View {
     var body: some View {
         VStack(spacing: spacing) {
             ForEach(Array(store.nowItems.enumerated()), id: \.element.id) { i, n in
-                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, muted: n.stale)
+                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, muted: n.stale, clearID: n.stale ? n.task.id : nil)
             }
         }
     }
@@ -174,14 +174,15 @@ struct EditorialView: View {
         }
     }
 
-    private func lede(n: Int, overdue: Int) -> some View {
+    private func lede(n: Int, overdue: Int) -> AnyView {
+        guard store.ready else { return AnyView(SBSkel(height: SB.u(40))) }
         var t = Text("\(n) to do").fontWeight(.semibold).foregroundColor(SB.t1) + Text(", \(overdue) overdue.")
         if let e = store.nextEvent {
             t = t + Text(" Next: ") + Text(e.title).fontWeight(.semibold).foregroundColor(SB.t1) + Text(" at \(SidebarLogic.eventTime(e.start)).")
         }
         let w = store.waiting.count
         t = t + Text(" \(w) agent\(w == 1 ? " is" : "s are") waiting for you.")
-        return t.font(.system(size: SB.fs(16))).foregroundColor(SB.t2).fixedSize(horizontal: false, vertical: true)
+        return AnyView(t.font(.system(size: SB.fs(16))).foregroundColor(SB.t2).fixedSize(horizontal: false, vertical: true))
     }
 
     @ViewBuilder private func unitView(_ L: SidebarLogic.Lists) -> some View {
@@ -319,13 +320,16 @@ struct CardsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack { Spacer(); SBStylePicker(store: store) }.padding(.bottom, 2)
                 Text("\(store.weekdayTitle), \(DateFormatter.sb("MMM d").string(from: store.now))").font(.system(size: SB.fs(34), weight: .bold)).tracking(-1)
-                Text("\(left) left today \u{00B7} \(L.overdue.count) overdue \u{00B7} \(store.doneCount) done").font(.system(size: SB.fs(15))).foregroundColor(SB.t2)
+                if store.ready {
+                    Text("\(left) left today \u{00B7} \(L.overdue.count) overdue \u{00B7} \(store.doneCount) done").font(.system(size: SB.fs(15))).foregroundColor(SB.t2)
+                } else { SBSkel(height: SB.u(20), width: SB.u(300)) }
                 if let e = store.nextEvent {
                     Text("Next up: \(e.title), \(SidebarLogic.eventTime(e.start))").font(.system(size: SB.fs(14))).foregroundColor(SB.t3).padding(.top, 8)
                 }
             }
-            SBRing(value: Double(store.doneCount) / Double(max(1, store.doneCount + left)), label: "\(store.doneCount)/\(store.doneCount + left)",
-                   caption: "done", size: SB.u(104), gradient: false)
+            if !store.ready { Circle().fill(SB.t1.opacity(0.08)).frame(width: SB.u(104), height: SB.u(104)) } else
+            { SBRing(value: Double(store.doneCount) / Double(max(1, store.doneCount + left)), label: "\(store.doneCount)/\(store.doneCount + left)",
+                   caption: "done", size: SB.u(104), gradient: false) }
         }
         .padding(SB.u(24)).frame(maxWidth: .infinity, alignment: .leading).sbGlass(radius: SB.u(24))
         nowCard
@@ -506,8 +510,10 @@ struct DayTimelineView: View {
                 SBStylePicker(store: store)
             }
             if store.unit == nil {
-                Text("\(L.overdue.count + L.today.count) to do \u{00B7} \(L.overdue.count) overdue \u{00B7} \(store.waiting.count) agents waiting \u{00B7} \(store.doneCount) done")
-                    .font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2)
+                if store.ready {
+                    Text("\(L.overdue.count + L.today.count) to do \u{00B7} \(L.overdue.count) overdue \u{00B7} \(store.waiting.count) agents waiting \u{00B7} \(store.doneCount) done")
+                        .font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2)
+                } else { SBSkel(height: SB.u(20), width: SB.u(340)) }
             } else if let c {
                 if let w = store.derived.workingHere { SBWorkingHere(task: w, size: 14).padding(.top, 2) }
                 if !c.goal.isEmpty { Text(c.goal).font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2).lineLimit(2) }
@@ -683,7 +689,7 @@ struct CommandView: View {
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(SB.bgd.opacity(0.18)))
             Text("\(DateFormatter.sb("EEE dd MMM").string(from: store.now)) \u{00B7} \(store.nowHM)")
             Spacer()
-            Text("\(L.overdue.count + L.today.count) open \u{00B7} \(store.doneCount) done")
+            Text(store.ready ? "\(L.overdue.count + L.today.count) open \u{00B7} \(store.doneCount) done" : "")
             SBStylePicker(store: store)
         }
         .font(mono(13)).foregroundColor(SB.t2)

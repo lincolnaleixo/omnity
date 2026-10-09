@@ -533,6 +533,8 @@ struct SBAgentRow: View {
     var key: Int?
     /// A stale marker: grey dot and text.
     var muted = false
+    /// A stale Now row: the task id whose `doing` marker the Clear button removes.
+    var clearID: String?
     @State private var hover = false
     @Environment(\.sbMono) private var mono
 
@@ -544,6 +546,7 @@ struct SBAgentRow: View {
             Text(agent.key).fontWeight(.semibold).foregroundColor(muted ? SB.t3 : SB.t1).lineLimit(1).fixedSize()
             Text(agent.query).foregroundColor(muted ? SB.t4 : SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             Text(muted ? "stale" : agent.age).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
+            if let id = clearID { SBPillButton(title: "Clear") { store.clearDoing(id) } }
         }
         .font(mono ?? .system(size: SB.fs(style == .editorial ? 15 : (style == .cards ? 14.5 : 13))))
         .foregroundColor(SB.t1)

@@ -58,6 +58,15 @@ enum SidebarClient {
     static func setSubtask(_ t: SBTask, _ s: SBSub, done: Bool) async throws -> SBTask? {
         try await call("PATCH", "tasks/\(t.id)/subtasks/\(s.index)", body: ["was": s.text, "done": done], as: TaskResponse.self).task
     }
+    /// Removes the `doing` marker of a task (the server answers with the task or nothing).
+    static func clearDoing(_ id: String) async throws {
+        var req = URLRequest(url: baseURL.appendingPathComponent("tasks/\(id)/doing"))
+        req.httpMethod = "DELETE"
+        req.setValue("Omnity", forHTTPHeaderField: "X-Omni-Device")
+        let (_, resp) = try await session.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw Failure(status: status) }
+    }
     static func addNote(_ id: String, _ text: String) async throws {
         _ = try await call("POST", "tasks/\(id)/history", body: ["text": text], as: TaskResponse.self)
     }

@@ -108,6 +108,7 @@ final class SidebarStore: ObservableObject {
     private var eventsDay = ""
     private var refreshing = false
     private var refreshAgain = false
+    private var refreshedAt = Date.distantPast
     private var failures = 0
     private var unitsAt = Date.distantPast
     private var contextAt: [String: Date] = [:]
@@ -239,6 +240,7 @@ final class SidebarStore: ObservableObject {
         guard monitor == nil else { return }
         SBTiming.start()
         loadCache()
+
         // Test builds: OMNITY_SIDEBAR_DEMO=expand:<id> or complete:<id> acts on a task a few seconds after launch.
         if let demo = ProcessInfo.processInfo.environment["OMNITY_SIDEBAR_DEMO"], let sep = demo.firstIndex(of: ":") {
             let (verb, id) = (String(demo[..<sep]), String(demo[demo.index(after: sep)...]))
@@ -274,7 +276,10 @@ final class SidebarStore: ObservableObject {
         }
     }
 
-    func panelAppeared() { panels += 1; refresh() }
+    func panelAppeared() {
+        panels += 1
+        if Date().timeIntervalSince(refreshedAt) > 5 { refresh() }
+    }
     func panelDisappeared() { panels = max(0, panels - 1) }
 
     /// The panel shows in this surface's window: the feature is on, it is not hidden, and the window is
@@ -313,8 +318,12 @@ final class SidebarStore: ObservableObject {
     private func loadCache() {
         let url = cacheURL
         Task.detached(priority: .utility) {
-            guard let data = try? Data(contentsOf: url), let c = try? JSONDecoder().decode(SBCache.self, from: data) else { return }
+            guard let data = try? Data(contentsOf: url), let c = try? JSONDecoder().decode(SBCache.self, from: data) else {
+                await MainActor.run { self.startRefresh() }
+                return
+            }
             await MainActor.run {
+                defer { self.startRefresh() }
                 guard self.tasks.isEmpty else { return }
                 self.units = c.units; self.contexts = c.contexts
                 self.tasks = c.tasks
@@ -329,6 +338,13 @@ final class SidebarStore: ObservableObject {
     }
 
     /// Writes the cache a moment after the last change (several contexts arrive together), off the main thread.
+    /// The first refresh starts as soon as the cache is read (at launch, not when the panel shows), so the wait
+    /// for the tmux snapshot and the panel overlaps it.
+    private func startRefresh() {
+        guard enabled && shown else { return }
+        refresh()
+    }
+
     private func saveCache() {
         saveWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
@@ -350,6 +366,7 @@ final class SidebarStore: ObservableObject {
         guard !refreshing else { refreshAgain = true; return }
         refreshing = true
         let began = Date()
+        refreshedAt = began
         setNow(Date())
         ensureContext(force: true)
         prefetchContexts()
@@ -390,7 +407,7 @@ final class SidebarStore: ObservableObject {
 
     /// The unit context of the current window's unit, read from the host when missing or older than 2 minutes.
     func ensureContext(force: Bool = false) {
-        guard panels > 0, let u = unit else { return }
+        guard panels > 0 || (enabled && shown), let u = unit else { return }
         if let at = contextAt[u], Date().timeIntervalSince(at) < (force ? 120 : 1e9) { return }
         fetchContext(u)
     }
@@ -398,7 +415,7 @@ final class SidebarStore: ObservableObject {
     /// Reads the contexts of the other tmux windows' units that are not known yet, over the same ssh connection
     /// (several run at once), so a switch of window already has its unit on screen.
     func prefetchContexts() {
-        guard panels > 0 else { return }
+        guard panels > 0 || (enabled && shown) else { return }
         for s in switcher.sessions {
             for w in s.windows {
                 guard let u = SidebarLogic.unit(forWindow: w.name, units: unitIDs), contexts[u] == nil, contextAt[u] == nil else { continue }
@@ -477,6 +494,13 @@ final class SidebarStore: ObservableObject {
                 doneCount = max(0, doneCount - 1)
                 selection = last.next?.id ?? selection
             } catch { showToast("Could not undo") }
+            refresh()
+        }
+    }
+
+    func clearDoing(_ id: String) {
+        Task {
+            do { try await SidebarClient.clearDoing(id) } catch { showToast("Could not clear the marker") }
             refresh()
         }
     }
