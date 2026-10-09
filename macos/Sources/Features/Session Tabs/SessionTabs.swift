@@ -146,6 +146,7 @@ final class SessionTabs: ObservableObject {
             self?.objectWillChange.send()
             DispatchQueue.main.async { self?.confirmOptimistic() }
         }.store(in: &bag)
+        HostStats.shared.install()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) ?? event }
         }
@@ -159,7 +160,7 @@ final class SessionTabs: ObservableObject {
         }
     }
 
-    func barAppeared() { bars += 1; switcher.refresh() }
+    func barAppeared() { bars += 1; switcher.refresh(); HostStats.shared.tick() }
     func barDisappeared() { bars = max(0, bars - 1) }
 
     /// The tab bar shows in this surface's window: the feature is on, the foreground process is

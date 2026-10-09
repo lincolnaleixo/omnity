@@ -37,13 +37,29 @@ struct SessionTabsBar: View {
     }
 }
 
+private struct TabsWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 private struct SessionTabsStrip: View {
     @ObservedObject var tabs: SessionTabs
     let palette: SessionTabsPalette
     let surface: Ghostty.SurfaceView?
+    @State private var tabsWidth: CGFloat = 0
 
     var body: some View {
         let current = tabs.currentName
+        GeometryReader { geo in strip(current: current, width: geo.size.width) }
+            .frame(height: 32)
+            .frame(maxWidth: .infinity)
+            .background(palette.strip)
+            .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 0.5) }
+            .onAppear { tabs.barAppeared() }
+            .onDisappear { tabs.barDisappeared(); SessionHoverCard.shared.hide() }
+    }
+
+    private func strip(current: String?, width: CGFloat) -> some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
@@ -52,7 +68,10 @@ private struct SessionTabsStrip: View {
                     }
                 }
                 .padding(.horizontal, 8)
+                .background(GeometryReader { Color.clear.preference(key: TabsWidthKey.self, value: $0.size.width) })
             }
+            .onPreferenceChange(TabsWidthKey.self) { tabsWidth = $0 }
+            .clipped()
             if let text = tabs.notice ?? (tabs.failed ? "offline" : nil) {
                 Text(text)
                     .font(.system(size: 11))
@@ -60,13 +79,13 @@ private struct SessionTabsStrip: View {
                     .lineLimit(1)
                     .padding(.trailing, 10)
             }
+            // Omnity: host stats. Labels go first when the tabs leave less room; never over the tabs.
+            if let labels = HostStatsView.fit(room: width - tabsWidth) {
+                HostStatsView(host: tabs.host, palette: palette, labels: labels)
+                    .padding(.horizontal, 12)
+            }
         }
-        .frame(height: 32)
-        .frame(maxWidth: .infinity)
-        .background(palette.strip)
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.hairline).frame(height: 0.5) }
-        .onAppear { tabs.barAppeared() }
-        .onDisappear { tabs.barDisappeared(); SessionHoverCard.shared.hide() }
+        .frame(maxHeight: .infinity)
     }
 }
 
