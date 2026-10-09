@@ -25,20 +25,8 @@ private struct SBCache: Codable {
 
 /// What the views read, computed once per data change (not in view bodies).
 struct SBDerived: Equatable {
-    var unit: String?
-    var lists = SidebarLogic.Lists()
-    var waiting: [SBAgent] = []
-    var waitingHere: [SBAgent] = []
-    var agentsAll: [SBAgent] = []
-    /// The Now block: tasks an agent is working on.
-    var nowItems: [SBNow] = []
-    /// The in-progress task of the current window (its `doing` equals this window), if any.
-    var workingHere: SBTask?
+    var panel = SBPanel(unit: nil)
     var dueNowIDs = Set<String>()
-    /// The merged "Needs you" / "Today" section of the unit view: waiting agents, then in-progress, overdue and today tasks.
-    var needsTitle = "Today"
-    var needsAgents: [SBAgent] = []
-    var needsTasks: [SBTask] = []
     var todaysEvents: [SBEvent] = []
 }
 
@@ -148,18 +136,19 @@ final class SidebarStore: ObservableObject {
         return nil
     }
     /// The unit of the current tmux window, nil = Today mode.
-    var unit: String? { derived.unit }
+    var unit: String? { derived.panel.unit }
     var unitTitle: String? { unit.flatMap { u in units.first { $0.id == u }?.title ?? contexts[u]?.title } }
     var context: SBUnitContext? { unit.flatMap { contexts[$0] } }
-    var lists: SidebarLogic.Lists { derived.lists }
+    var lists: SidebarLogic.Lists { derived.panel.lists }
     func titleOf(_ unit: String) -> String { units.first { $0.id == unit }?.title ?? unit }
 
-    /// Every window that is not idle, waiting first (what the command style lists).
-    var agentsAll: [SBAgent] { derived.agentsAll }
-    var waiting: [SBAgent] { derived.waiting }
-    /// Waiting windows of the current unit's window.
-    var waitingHere: [SBAgent] { derived.waitingHere }
-    var nowItems: [SBNow] { derived.nowItems }
+    /// Windows not idle and not on a Now row (command and cards Today lists).
+    var agentsAll: [SBAgent] { derived.panel.agentsAll }
+    /// Waiting windows of the current unit (all in Today mode) that no in-progress task shows.
+    var waitingHere: [SBAgent] { derived.panel.waiting }
+    /// How many windows wait for Lincoln in all (for counts).
+    var waitingTotal: Int { derived.panel.waitingTotal }
+    var nowItems: [SBNow] { derived.panel.now }
     var todaysEvents: [SBEvent] { derived.todaysEvents }
 
     /// Window ids ⌥1...9 jump to, aligned with the numbers on screen: the Now block first, then (command style) the agents.
@@ -173,33 +162,10 @@ final class SidebarStore: ObservableObject {
     private func rebuild() {
         var d = SBDerived()
         let sessions = switcher.sessions
-        d.unit = currentWindow.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: unitIDs) }
-        d.lists = SidebarLogic.lists(tasks, unit: d.unit, today: today)
-        d.waiting = SidebarLogic.agents(sessions, now: now)
-        d.waitingHere = d.unit == nil ? d.waiting : d.waiting.filter { a in
-            SidebarLogic.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs) == d.unit
-        }
-        let rank = ["waiting": 0, "busy": 1, "bg": 2, "stale": 3]
-        let all: [SBAgent] = sessions.flatMap { s in
-            s.windows.compactMap { w in
-                guard rank[w.state ?? "idle"] != nil else { return nil }
-                return SBAgent(key: "\(s.name):\(w.name)", windowID: w.id, query: (w.title ?? "").isEmpty ? (w.state ?? "") : w.title!,
-                               age: SidebarLogic.age(since: w.activity, now: now), state: w.state ?? "idle")
-            }
-        }
-        d.agentsAll = all.enumerated().sorted { a, b in
-            let (x, y) = (rank[a.element.state] ?? 9, rank[b.element.state] ?? 9)
-            return x != y ? x < y : a.offset < b.offset
-        }.map(\.element)
-        d.nowItems = SidebarLogic.now(tasks, unit: d.unit, sessions: sessions, at: now)
-        if let w = currentWindow {
-            d.workingHere = SidebarLogic.doing(tasks, unit: nil).first { $0.doing == "\(w.session)/\(w.window.name)" && !$0.doingStale }
-        }
-        d.dueNowIDs = Set(SidebarLogic.dueNow(tasks, unit: d.unit, today: today, now: nowHM).map(\.id))
-        let doing = SidebarLogic.doing(tasks, unit: d.unit), skip = Set(doing.map(\.id))
-        d.needsAgents = d.waitingHere
-        d.needsTitle = d.waitingHere.isEmpty ? "Today" : "Needs you"
-        d.needsTasks = doing + d.lists.overdue.filter { !skip.contains($0.id) } + d.lists.today.filter { !skip.contains($0.id) }
+        let cur = currentWindow
+        let unit = cur.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: unitIDs) }
+        d.panel = SidebarLogic.panel(tasks: tasks, sessions: sessions, unit: unit, current: cur, unitIDs: unitIDs, today: today, at: now)
+        d.dueNowIDs = Set(SidebarLogic.dueNow(tasks, unit: unit, today: today, now: nowHM).map(\.id))
         d.todaysEvents = events.filter { !$0.allDay }.sorted { $0.start < $1.start }
         if d != derived { derived = d }
         updateContextLoading()

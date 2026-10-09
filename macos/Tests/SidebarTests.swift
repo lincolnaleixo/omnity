@@ -6,6 +6,7 @@
 //
 import Testing
 import Foundation
+import SwiftUI
 @testable import Ghostty
 
 struct SidebarTests {
@@ -128,6 +129,63 @@ struct SidebarTests {
         #expect(all[1].windowID == nil)                             // a window tmux does not list: no jump
         #expect(all[2].state == "stale" && all[2].stale)
         #expect(SidebarLogic.now(ts, unit: "omni", sessions: sessions).map(\.id) == ["gone", "old"])
+    }
+    // MARK: Each item once, aligned, nothing empty
+    func win(_ id: String, _ name: String, _ state: String, _ title: String = "") -> TmuxWindow {
+        TmuxWindow(id: id, index: 1, name: name, state: state, title: title, path: "/", command: "claude", activity: nil, last_used: nil, active: false)
+    }
+    /// Fixtures where everything overlaps: waiting windows that work on tasks, tasks that are also due today or overdue.
+    func fixture(current: String?) -> (tasks: [SBTask], sessions: [TmuxSession], units: Set<String>, cur: (session: String, window: TmuxWindow)?) {
+        let sessions = [TmuxSession(name: "ecom", windows: [win("@1", "lln", "waiting", "approve ads?"), win("@2", "ecomops", "busy")]),
+                        TmuxSession(name: "tools", windows: [win("@3", "omni", "waiting", "merge ok?"), win("@4", "skills", "stale"), win("@5", "scratch", "waiting", "who?")])]
+        let tasks = [
+            SBTask(id: "a", unit: "longlifenutri", title: "Ads", due: "2026-10-09T09:30", doing: "ecom/lln"),
+            SBTask(id: "b", unit: "omni", title: "Sidebar", due: "2026-10-09", doing: "tools/omni"),
+            SBTask(id: "c", unit: "omni", title: "Backup", due: "2026-10-05", doing: "tools/skills", doingStale: true),
+            SBTask(id: "d", unit: "omni", title: "Dup window", due: "2026-10-09", doing: "tools/omni"),
+            SBTask(id: "e", unit: "omni", title: "Late", due: "2026-10-01"),
+            SBTask(id: "f", unit: "omni", title: "Later", due: "2026-10-20"),
+            SBTask(id: "g", unit: "omni", title: "No date"),
+            SBTask(id: "h", unit: "longlifenutri", title: "Other unit", due: "2026-10-09")]
+        let cur = sessions.flatMap { s in s.windows.map { (s.name, $0) } }.first { $0.1.id == current }.map { (session: $0.0, window: $0.1) }
+        return (tasks, sessions, ["omni", "longlifenutri"], cur)
+    }
+    @Test func everyItemAppearsOnceInEveryStyleAndMode() {
+        for current in [nil, "@3", "@1", "@5"] as [String?] {
+            let f = fixture(current: current)
+            let unit = f.cur.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: f.units) }
+            let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: unit, current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date())
+            for style in SidebarStyle.allCases {
+                let shown = p.shown(style)
+                #expect(Set(shown.tasks).count == shown.tasks.count, "task twice: \(shown.tasks) \(style) current=\(current ?? "-")")
+                #expect(Set(shown.windows).count == shown.windows.count, "window twice: \(shown.windows) \(style) current=\(current ?? "-")")
+            }
+        }
+    }
+    @Test func waitingWindowRidesOnItsNowRow() {
+        let f = fixture(current: nil)
+        let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: nil, current: nil, unitIDs: f.units, today: "2026-10-09", at: Date())
+        #expect(p.now.map(\.id) == ["a", "b", "c"])                    // one row per window, live first, stale last
+        #expect(p.now[1].question == "merge ok?" && p.now[0].question == "approve ads?")
+        #expect(p.waiting.map(\.windowID) == ["@5"])                  // only the waiting window with no task
+        #expect(Set(p.lists.all.map(\.id)) == ["d", "e", "f", "g", "h"])  // "d" shares a window with "b": it stays in the lists
+        #expect(p.needsTitle == "Needs you")
+    }
+    @Test func currentWindowTaskIsOnlyInTheHeaderLine() {
+        let f = fixture(current: "@3")
+        let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: "omni", current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date())
+        #expect(p.workingHere?.id == "b" && p.workingQuestion == "merge ok?")
+        #expect(!p.now.contains { $0.id == "b" } && !p.waiting.contains { $0.windowID == "@3" })
+        #expect(!p.lists.all.contains { $0.id == "b" })
+    }
+    @Test func emptyTodayHasNoWaitingSection() {
+        let p = SidebarLogic.panel(tasks: [], sessions: [TmuxSession(name: "t", windows: [win("@1", "x", "idle")])], unit: nil, current: nil, unitIDs: [], today: "2026-10-09", at: Date())
+        #expect(p.waiting.isEmpty && p.now.isEmpty && p.lists.all.isEmpty && p.needsTitle == "Today")
+    }
+    @Test func rowsAndEmptyStateShareTheLeadingInset() {
+        // Section title and "Nothing here" start at 0; rows are bled out by their own padding so their text starts at 0 too.
+        for spec in [SBRowSpec.editorial, .timeline, .command(Font.system(size: 13)), .cards] { #expect(spec.contentInset == 0) }
+        #expect(SBRowSpec.editorial.bleed == SB.u(10) && SBRowSpec.cards.bleed == 0)
     }
     // MARK: Agents
 

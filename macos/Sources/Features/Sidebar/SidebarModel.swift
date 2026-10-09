@@ -125,7 +125,7 @@ struct SBHistory: Equatable {
 
 extension SBNow {
     /// The row the agent lists draw (windowID is empty when the window is not in tmux's snapshot: no jump).
-    var agent: SBAgent { SBAgent(key: label, windowID: windowID ?? "", query: task.title, age: age, state: state) }
+    var agent: SBAgent { SBAgent(key: label, windowID: windowID ?? "", query: task.title, age: age, state: state, note: question) }
 }
 
 enum SBDueKind: Equatable { case none, overdue, today, later }
@@ -142,6 +142,8 @@ struct SBAgent: Equatable, Identifiable {
     var query: String
     var age: String
     var state: String
+    /// A second line on the row: the question of a waiting window that works on a task.
+    var note: String? = nil
     var id: String { key }
 }
 
@@ -153,7 +155,90 @@ struct SBNow: Equatable, Identifiable {
     var state: String       // tmux state, "stale" when the marker is stale or the window is unknown
     var stale: Bool
     var age: String
+    /// The question of the window when it waits for Lincoln (shown on the same row, never as a separate agent).
+    var question: String?
     var id: String { task.id }
+}
+
+// MARK: - The panel's content, each item once
+
+/// What the panel lists, decided once: every task and every agent window appears in exactly one place
+/// (Now, the header line of the unit view, Needs you / Waiting, or a task list), in all styles and both modes.
+struct SBPanel: Equatable {
+    var unit: String?
+    /// In-progress tasks (one per agent window); a waiting window's question rides on its row.
+    var now: [SBNow] = []
+    /// Unit view only: the task the current window works on, shown in the header line, not in `now`.
+    var workingHere: SBTask?
+    var workingQuestion: String?
+    /// Waiting agents (of the unit, or all) that no in-progress task already shows.
+    var waiting: [SBAgent] = []
+    /// Every non-idle window that no in-progress task shows (the command and cards Today lists).
+    var agentsAll: [SBAgent] = []
+    /// Tasks without those in progress.
+    var lists = SidebarLogic.Lists()
+    /// Total waiting windows, for the counts in headers.
+    var waitingTotal = 0
+
+    var needsTitle: String { waiting.isEmpty ? "Today" : "Needs you" }
+    var needsTasks: [SBTask] { lists.overdue + lists.today }
+
+    /// What each style prints in each mode, as (task ids, window ids): the gate that nothing appears twice.
+    func shown(_ style: SidebarStyle) -> (tasks: [String], windows: [String]) {
+        var t = now.map(\.task.id) + (workingHere.map { [$0.id] } ?? [])
+        var w = now.map { $0.windowID ?? $0.label } + (workingHere == nil ? [] : ["working-here"])
+        let timed = lists.today.filter { !SidebarLogic.time($0).isEmpty }, anytime = lists.today.filter { SidebarLogic.time($0).isEmpty }
+        switch (style, unit == nil) {
+        case (.editorial, true), (.command, true): t += (lists.overdue + lists.today).map(\.id); w += (style == .command ? agentsAll : waiting).map(\.windowID)
+        case (.cards, true): t += (lists.overdue + lists.today).map(\.id); w += agentsAll.prefix(5).map(\.windowID)
+        case (.timeline, true): t += (lists.overdue + anytime + timed).map(\.id); w += waiting.map(\.windowID)
+        case (.command, false): t += (lists.overdue + lists.today + lists.open).map(\.id); w += waiting.map(\.windowID)
+        case (.timeline, false): t += (lists.overdue + anytime + timed + lists.open).map(\.id); w += waiting.map(\.windowID)
+        default: t += (needsTasks + lists.open).map(\.id); w += waiting.map(\.windowID)   // editorial and cards, unit view
+        }
+        return (t, w)
+    }
+}
+
+extension SidebarLogic {
+    static func panel(tasks: [SBTask], sessions: [TmuxSession], unit: String?, current: (session: String, window: TmuxWindow)?,
+                      unitIDs: Set<String>, today: String, at: Date) -> SBPanel {
+        var p = SBPanel(unit: unit)
+        // In progress: one task per window, the first wins (live before stale); the rest stay in the lists.
+        var seen = Set<String>(), mine: SBTask?
+        let here = current.map { "\($0.session)/\($0.window.name)" }
+        for n in now(tasks, unit: unit, sessions: sessions, at: at) where seen.insert(n.label).inserted {
+            if unit != nil, n.label == here, !n.stale, mine == nil { mine = n.task; p.workingQuestion = n.question; continue }
+            p.now.append(n)
+        }
+        p.workingHere = mine
+        let shownTasks = Set(p.now.map(\.id) + (mine.map { [$0.id] } ?? []))
+        var l = lists(tasks, unit: unit, today: today)
+        l.overdue.removeAll { shownTasks.contains($0.id) }; l.today.removeAll { shownTasks.contains($0.id) }; l.open.removeAll { shownTasks.contains($0.id) }
+        p.lists = l
+        // Windows already on a Now row (or the header line) are not listed again as agents.
+        var taken = Set(p.now.compactMap(\.windowID))
+        if mine != nil, let c = current { taken.insert(c.window.id) }
+        let waitingAll = agents(sessions, now: at)
+        p.waitingTotal = waitingAll.count
+        let scoped = unit == nil ? waitingAll : waitingAll.filter { a in
+            Self.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs) == unit
+        }
+        p.waiting = scoped.filter { !taken.contains($0.windowID) }
+        let rank = ["waiting": 0, "busy": 1, "bg": 2, "stale": 3]
+        let all: [SBAgent] = sessions.flatMap { s in
+            s.windows.compactMap { w in
+                guard rank[w.state ?? "idle"] != nil, !taken.contains(w.id) else { return nil }
+                return SBAgent(key: "\(s.name):\(w.name)", windowID: w.id, query: (w.title ?? "").isEmpty ? (w.state ?? "") : w.title!,
+                               age: age(since: w.activity, now: at), state: w.state ?? "idle")
+            }
+        }
+        p.agentsAll = all.enumerated().sorted { a, b in
+            let (x, y) = (rank[a.element.state] ?? 9, rank[b.element.state] ?? 9)
+            return x != y ? x < y : a.offset < b.offset
+        }.map(\.element)
+        return p
+    }
 }
 
 // MARK: - Styles
@@ -294,7 +379,8 @@ enum SidebarLogic {
                 ? sessions.first { $0.name == parts[0] }?.windows.first { $0.name == parts[1] } : nil
             let stale = t.doingStale
             return SBNow(task: t, label: label, windowID: w?.id, state: stale ? "stale" : (w?.state ?? "idle"), stale: stale,
-                         age: w.map { age(since: $0.activity, now: at) } ?? "")
+                         age: w.map { age(since: $0.activity, now: at) } ?? "",
+                         question: w?.state == "waiting" ? ((w?.title ?? "").isEmpty ? "Waiting for you" : w?.title) : nil)
         }
         return rows.filter { !$0.stale } + rows.filter(\.stale)
     }

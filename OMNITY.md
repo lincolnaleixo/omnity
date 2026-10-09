@@ -27,6 +27,7 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   windows; ctrl+cmd+1...9 jump to the native tab, cmd+shift+[ / ] stay native); right-click: Rename session, New window,
   Close session (confirm). Uses the switcher's data (`WindowSwitcher.shared`, `TmuxSwitchClient`) and the host's
   `tmux-switch --session | --rename | --new-window | --kill-session`. Code in `macos/Sources/Features/Session Tabs/`.
+- Sidebar rule: every task and every agent window appears once in the whole panel (an in-progress task carries its waiting window's question on its Now row), an empty section is not drawn, zero counts are left out of sentences, and a list's empty state starts at the same left edge as its title (gates: SidebarTests `everyItemAppearsOnceInEveryStyleAndMode`, `rowsAndEmptyStateShareTheLeadingInset`).
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).
 

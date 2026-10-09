@@ -281,6 +281,24 @@ struct SBRowSpec {
     var gap: CGFloat = 13
 }
 
+extension SBRowSpec {
+    static let editorial = SBRowSpec(title: 17.5, meta: 13.5, hist: 13, check: 24, pad: EdgeInsets(top: 9, leading: 10, bottom: 9, trailing: 10), radius: 12)
+    static let cards = SBRowSpec(title: 16, meta: 13, hist: 12.5, check: 24, pad: EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14), radius: 16,
+                                 fill: SB.t1.opacity(0.06), hoverFill: SB.t1.opacity(0.10), selFill: SB.acc.opacity(0.16), selStroke: SB.acc.opacity(0.4))
+    static let timeline = SBRowSpec(title: 15.5, meta: 12.5, hist: 12.5, check: 24, pad: EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12), radius: 14,
+                                    selFill: SB.acc.opacity(0.14), selStroke: SB.acc.opacity(0.55))
+    static func command(_ mono: Font) -> SBRowSpec {
+        SBRowSpec(title: 13.5, meta: 12, hist: 12, check: 19, pad: EdgeInsets(top: 7, leading: 10, bottom: 7, trailing: 10), radius: 8,
+                  selFill: SB.acc.opacity(0.13), selBar: true, inline: true, mono: mono, gap: 11)
+    }
+    /// Rows without a card background pad themselves inward; the list bleeds out by that much so the check circle
+    /// lines up with the section title and the empty state ("Nothing here") that is never bled.
+    var bleed: CGFloat { fill == .clear ? SB.u(pad.leading) : 0 }
+    /// Where a row's text starts relative to the section's leading edge (what "Nothing here" and the title use: 0).
+    /// Card-style rows are boxes of their own, so they start at 0 too, with the text inside the box.
+    var contentInset: CGFloat { fill == .clear ? SB.u(pad.leading) - bleed : 0 }
+}
+
 /// Takes values, not the store: it redraws only when its task or its `info` changes (see `.equatable()`).
 struct SBTaskRow: View, Equatable {
     let store: SidebarStore
@@ -540,6 +558,7 @@ struct SBAgentRow: View {
 
     var body: some View {
         let compact = style == .command
+        VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: 10) {
             SBDot(color: muted ? SB.t4 : SB.stateColor(agent.state), size: compact ? 8 : 9, pulse: agent.state == "waiting")
             if let key { Text("\(key)").foregroundColor(SB.t4).frame(width: 14, alignment: .leading) }
@@ -547,6 +566,10 @@ struct SBAgentRow: View {
             Text(agent.query).foregroundColor(muted ? SB.t4 : SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             Text(muted ? "stale" : agent.age).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
             if let id = clearID { SBPillButton(title: "Clear") { store.clearDoing(id) } }
+        }
+        if let note = agent.note {
+            Text(note).foregroundColor(SB.wait).lineLimit(1).padding(.leading, (key == nil ? 0 : 24) + 19)
+        }
         }
         .font(mono ?? .system(size: SB.fs(style == .editorial ? 15 : (style == .cards ? 14.5 : 13))))
         .foregroundColor(SB.t1)
