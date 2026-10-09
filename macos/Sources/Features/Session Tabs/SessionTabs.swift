@@ -164,6 +164,7 @@ final class SessionTabs: ObservableObject {
     /// The tab bar shows in this surface's window: the feature is on, the foreground process is
     /// `ssh <host>` and tmux answered with at least one attached client.
     @MainActor func attached(_ surface: Ghostty.SurfaceView?) -> Bool {
+        if TmuxSwitchClient.local { return enabled && switcher.current != nil }   // Omnity: test builds
         guard enabled, !host.isEmpty, switcher.current != nil,
               let pid = surface?.surfaceModel?.foregroundPID,
               let argv = RemoteDrop.processArgs(pid: pid) else { return false }

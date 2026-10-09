@@ -82,6 +82,8 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                     // Omnity: tmux session tabs (only in windows attached to tmux).
                     SessionTabsBar(config: ghostty.config, surface: lastFocusedSurface?.value)
 
+                    // Omnity: right-side panel next to the terminal (only in windows attached to tmux).
+                    SidebarContainer(config: ghostty.config, surface: lastFocusedSurface?.value) {
                     TerminalSplitTreeView(
                         tree: viewModel.surfaceTree,
                         action: { delegate?.performSplitAction($0) })
@@ -106,6 +108,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         }
                         .frame(idealWidth: lastFocusedSurface?.value?.initialSize?.width,
                                idealHeight: lastFocusedSurface?.value?.initialSize?.height)
+                    }
                 }
                 // Ignore safe area to extend up in to the titlebar region if we have the "hidden" titlebar style
                 .ignoresSafeArea(.container, edges: ghostty.config.macosTitlebarStyle == .hidden ? .top : [])

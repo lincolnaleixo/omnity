@@ -217,6 +217,7 @@ class AppDelegate: NSObject,
         Dictation.shared.install()
         WindowSwitcher.shared.install()
         SessionTabs.shared.install()
+        SidebarStore.shared.install()
         OmnityUpdater.shared.start()
 
         // System settings overrides

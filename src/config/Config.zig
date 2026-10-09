@@ -3584,6 +3584,18 @@ keybind: Keybinds = .{},
 /// the rest follow alphabetically. Empty means alphabetical.
 @"macos-tmux-session-order": ?[:0]const u8 = null,
 
+/// Omnity: show the right-side panel (today's tasks, calendar, waiting
+/// agents, unit context) in windows attached to tmux on
+/// `macos-window-switcher-host`. cmd+shift+T shows or hides it.
+///
+/// The default is true.
+@"macos-sidebar": bool = true,
+/// Omnity: look of the right-side panel: `editorial`, `cards`, `timeline` or
+/// `command`. A style picked in the panel (or with cmd+shift+1...4) is
+/// remembered and wins over this value.
+///
+/// The default is `editorial`.
+@"macos-sidebar-style": ?[:0]const u8 = null,
 /// Customize the macOS app icon.
 ///
 /// This only affects the icon that appears in the dock, application

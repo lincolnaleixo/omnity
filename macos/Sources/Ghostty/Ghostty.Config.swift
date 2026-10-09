@@ -505,6 +505,23 @@ extension Ghostty {
             return String(cString: ptr)
         }
 
+        /// Omnity: right-side panel in windows attached to tmux.
+        var macosSidebar: Bool {
+            guard let config = self.config else { return false }
+            var v = true
+            let key = "macos-sidebar"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return v
+        }
+        /// Omnity: default look of the right-side panel (editorial, cards, timeline, command).
+        var macosSidebarStyle: String? {
+            guard let config = self.config else { return nil }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-sidebar-style"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))),
+                  let ptr = v else { return nil }
+            return String(cString: ptr)
+        }
         /// Omnity: the terminal font settings (families, size, styles, features, cell
         /// adjustments) that the window switcher preview draws with.
         var omnityFont: SwitcherFontConfig { SwitcherFontConfig(config: config) }

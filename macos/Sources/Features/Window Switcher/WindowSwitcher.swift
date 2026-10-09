@@ -99,6 +99,9 @@ enum TmuxSwitchClient {
         ProcessInfo.processInfo.environment["OMNITY_SWITCH_COMMAND"] ?? "/home/robot/.local/bin/tmux-switch"
     }
 
+    /// Omnity: test builds run the commands on this Mac instead of over ssh (`OMNITY_SIDEBAR_LOCAL=1`).
+    static var local: Bool { ProcessInfo.processInfo.environment["OMNITY_SIDEBAR_LOCAL"] == "1" }
+
     static func isWindowID(_ s: String) -> Bool {
         s.range(of: #"^@[0-9]+$"#, options: .regularExpression) != nil
     }
@@ -115,11 +118,12 @@ enum TmuxSwitchClient {
         var out: Data
         var err: String
     }
-    static func execute(host: String, _ args: [String]) async -> Result? {
-        await withCheckedContinuation { cont in
+    static func execute(host: String, _ args: [String], command: String? = nil) async -> Result? {
+        let command = command ?? Self.command
+        return await withCheckedContinuation { cont in
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = [
+            p.executableURL = URL(fileURLWithPath: local ? "/bin/sh" : "/usr/bin/ssh")
+            p.arguments = local ? ["-c", ([command] + args).joined(separator: " ")] : [
                 "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "LogLevel=ERROR",
                 "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/omnity-switch-%C",
                 "-o", "ControlPersist=10m", host, ([command] + args).joined(separator: " "),
