@@ -50,7 +50,7 @@ private struct SBRows: View {
     }
 }
 
-/// The Now block: tasks an agent works on, each with its tmux window (click or ⌥N jumps there; stale ones are grey).
+/// The Now block: tasks an agent works on, each with its tmux window (click or ⌃⌥N jumps there; stale ones are grey).
 private struct SBNowList: View {
     @ObservedObject var store: SidebarStore
     let style: SidebarStyle
@@ -720,7 +720,7 @@ struct CommandView: View {
         let ags = unit == nil ? store.agentsAll : store.waitingHere
         let nn = store.nowItems.count
         if nn > 0 {
-            sec("now", "Now", "\(nn)", color: SB.busy, hint: "\u{2325}1-9 jump") {
+            sec("now", "Now", "\(nn)", color: SB.busy, hint: "\u{2303}\u{2325}1-9 jump") {
                 SBNowList(store: store, style: .command).padding(.horizontal, -SB.u(10))
             }
         }
@@ -774,7 +774,7 @@ struct CommandView: View {
 
     private var footer: some View {
         HStack(spacing: 16) {
-            ForEach([("j k", "move"), ("x", "complete"), ("space", "expand"), ("\u{23CE}", "open"), ("\u{2325}1", "jump"), ("\u{21E7}\u{2318}T", "hide")], id: \.1) { k in
+            ForEach([("j k", "move"), ("x", "complete"), ("space", "expand"), ("\u{23CE}", "open"), ("\u{2303}\u{2325}1", "jump"), ("\u{21E7}\u{2318}T", "hide")], id: \.1) { k in
                 HStack(spacing: 5) { SBKbd(text: k.0); Text(k.1) }
             }
         }

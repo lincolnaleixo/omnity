@@ -6,7 +6,7 @@ import SwiftUI
 /// terminal (it is part of the window's layout, not an overlay), shows Today across units or the unit
 /// of the current tmux window, and comes in four looks (see SidebarStyles.swift). Keys: cmd+shift+T
 /// shows/hides it, cmd+shift+1...4 picks the look (remembered); after a click in the panel j/k move,
-/// x completes, space expands, return opens Tally, u undoes, n adds a note, option+1...9 jumps to an
+/// x completes, space expands, return opens Tally, u undoes, n adds a note, control+option+1...9 jumps to an
 /// agent's window. Data and actions are in SidebarStore.swift.
 
 /// Wraps the terminal view and adds the panel to its right.

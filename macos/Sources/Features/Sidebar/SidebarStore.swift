@@ -151,7 +151,7 @@ final class SidebarStore: ObservableObject {
     var nowItems: [SBNow] { derived.panel.now }
     var todaysEvents: [SBEvent] { derived.todaysEvents }
 
-    /// Window ids ⌥1...9 jump to, aligned with the numbers on screen: the Now block first, then (command style) the agents.
+    /// Window ids ⌃⌥1...9 jump to, aligned with the numbers on screen: the Now block first, then (command style) the agents.
     var jumpTargets: [String?] {
         let nowIDs: [String?] = nowItems.map(\.windowID)
         guard style == .command else { return nowIDs }
@@ -593,8 +593,8 @@ final class SidebarStore: ObservableObject {
             return nil
         }
         guard panels > 0, shown else { return event }
-        // option+1...9 jumps to a window of the Now block (and, in the command style, to an agent's window).
-        if mods == .option, let n = SessionTabsKeys.digits[event.keyCode] {
+        // control+option+1...9 jumps (option+digit belongs to tmux's M-1...9) to a window of the Now block (and, in the command style, to an agent's window).
+        if mods == [.control, .option], let n = SessionTabsKeys.digits[event.keyCode] {
             let list = jumpTargets
             if list.indices.contains(n - 1), let id = list[n - 1] { go(windowID: id); swallowedUps.insert(event.keyCode); return nil }
             return event
