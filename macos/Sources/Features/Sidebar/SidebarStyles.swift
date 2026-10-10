@@ -58,23 +58,8 @@ private struct SBNowList: View {
     var body: some View {
         VStack(spacing: spacing) {
             ForEach(Array(store.nowItems.enumerated()), id: \.element.id) { i, n in
-                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, muted: n.stale, clearID: n.stale ? n.task.id : nil)
+                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, here: n.here, muted: n.stale, clearID: n.stale ? n.task.id : nil)
             }
-        }
-    }
-}
-
-/// "This window is working on <task>" under the header of a unit view.
-private struct SBWorkingHere: View {
-    let task: SBTask
-    var question: String?
-    var size: CGFloat = 14
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            SBDot(color: question == nil ? SB.busy : SB.wait, size: 7, pulse: true)
-            (Text("This window is working on ") + Text(task.title).fontWeight(.semibold).foregroundColor(SB.t1)
-                + (question.map { Text(" \u{00B7} \($0)").foregroundColor(SB.wait) } ?? Text("")))
-                .font(.system(size: SB.fs(size))).foregroundColor(SB.t2).lineLimit(2)
         }
     }
 }
@@ -214,14 +199,12 @@ struct EditorialView: View {
                 Text([c.kind, c.type].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")).foregroundColor(SB.t2)
             }
             .font(.system(size: SB.fs(13.5))).padding(.top, 10)
-            if let w = store.derived.panel.workingHere { SBWorkingHere(task: w, question: store.derived.panel.workingQuestion, size: 13.5).padding(.top, 10) }
             if !c.goal.isEmpty {
                 Text(c.goal).font(SB.serif(SB.u(21), italic: true)).foregroundColor(Color(red: 0.87, green: 0.89, blue: 0.97))
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 12)
             }
             if !c.kpis.isEmpty { kpis(c.kpis) }
         } else {
-            if let w = store.derived.panel.workingHere { SBWorkingHere(task: w, question: store.derived.panel.workingQuestion, size: 13.5).padding(.top, 10) }
             if store.contextLoading {
                 VStack(alignment: .leading, spacing: 10) {
                     SBSkel(height: SB.u(22), width: SB.u(200))
@@ -383,7 +366,6 @@ struct CardsView: View {
                 SBSkel(height: SB.u(20), width: SB.u(220)).padding(.top, 2)
                 SBSkel(height: SB.u(20)).padding(.top, 4)
             }
-            if let w = store.derived.panel.workingHere { SBWorkingHere(task: w, question: store.derived.panel.workingQuestion).padding(.top, 6) }
         }
         .padding(SB.u(24)).frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) { SBStylePicker(store: store).padding(SB.u(18)) }
@@ -536,7 +518,6 @@ struct DayTimelineView: View {
                         .font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2)
                 } else { SBSkel(height: SB.u(20), width: SB.u(340)) }
             } else if let c {
-                if let w = store.derived.panel.workingHere { SBWorkingHere(task: w, question: store.derived.panel.workingQuestion, size: 14).padding(.top, 2) }
                 if !c.goal.isEmpty { Text(c.goal).font(.system(size: SB.fs(14.5))).foregroundColor(SB.t2).lineLimit(2) }
                 HStack(spacing: SB.u(26)) {
                     ForEach(Array(c.kpis.prefix(3).enumerated()), id: \.offset) { _, k in
@@ -554,7 +535,6 @@ struct DayTimelineView: View {
                 }
                 .padding(.top, 8)
             } else {
-                if let w = store.derived.panel.workingHere { SBWorkingHere(task: w, question: store.derived.panel.workingQuestion, size: 14).padding(.top, 2) }
                 if store.contextLoading {
                     SBSkel(height: SB.u(20)).padding(.top, 2)
                     SBSkel(height: SB.u(34), width: SB.u(260)).padding(.top, 6)
@@ -776,9 +756,6 @@ struct CommandView: View {
     private func kv(_ c: SBUnitContext) -> some View {
         var rows: [(String, String)] = []
         rows.append(("stage", [c.stage, c.kind].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")))
-        if let w = store.derived.panel.workingHere {
-            rows.append(("working on", w.title + (store.derived.panel.workingQuestion.map { " \u{00B7} \($0)" } ?? "")))
-        }
         if !c.goal.isEmpty { rows.append(("goal", c.goal)) }
         for k in c.kpis { rows.append((k.label.lowercased(), "\(k.value)  \(k.note)")) }
         if let b = c.blueprint, let h = b.health {

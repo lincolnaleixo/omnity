@@ -95,6 +95,38 @@ enum WindowSwitcherModel {
 // MARK: - ssh
 
 enum TmuxSwitchClient {
+    /// Omnity: the local port of this window's ssh connection. `tmux-switch --peer` uses it to find the tmux
+    /// client of THIS window, not the one with the latest activity of all clients (another Mac, another window).
+    nonisolated(unsafe) static var peer: String?
+    /// `lsof -Fn` of an ssh process: the local port of its connection (`n<local>:<port>-><remote>:<port>`).
+    static func localPort(lsof: String) -> String? {
+        for line in lsof.split(separator: "\n") where line.hasPrefix("n") && line.contains("->") {
+            let local = line.dropFirst().components(separatedBy: "->")[0]
+            if let port = local.split(separator: ":").last, Int(port) != nil { return String(port) }
+        }
+        return nil
+    }
+    static func localPort(pid: pid_t) async -> String? {
+        let r = await run(path: "/usr/sbin/lsof", ["-a", "-n", "-P", "-p", String(pid), "-iTCP", "-Fn"])
+        return r.flatMap { localPort(lsof: String(decoding: $0, as: UTF8.self)) }
+    }
+    private static func run(path: String, _ args: [String]) async -> Data? {
+        await withCheckedContinuation { cont in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: path)
+            p.arguments = args
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice
+            p.standardInput = FileHandle.nullDevice
+            do { try p.run() } catch { cont.resume(returning: nil); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                cont.resume(returning: data)
+            }
+        }
+    }
     static var command: String {
         ProcessInfo.processInfo.environment["OMNITY_SWITCH_COMMAND"] ?? "/home/robot/.local/bin/tmux-switch"
     }
@@ -119,6 +151,8 @@ enum TmuxSwitchClient {
         var err: String
     }
     static func execute(host: String, _ args: [String], command: String? = nil) async -> Result? {
+        // Omnity: every tmux-switch call acts on this window's own tmux client when we know its ssh port.
+        let args = command == nil ? args + (peer.map { ["--peer", $0] } ?? []) : args
         let command = command ?? Self.command
         return await withCheckedContinuation { cont in
             let p = Process()
@@ -349,7 +383,10 @@ final class WindowSwitcher: ObservableObject {
         let host = self.host
         guard !host.isEmpty, force || !refreshing else { return }
         refreshing = true
+        let pid = MainActor.assumeIsolated { SessionTabs.shared.keyForegroundPID() }
         Task {
+            // Omnity: follow the window shown in the key Omnity window (its ssh connection), then read the snapshot.
+            if let pid { TmuxSwitchClient.peer = await TmuxSwitchClient.localPort(pid: pid) }
             let data = await TmuxSwitchClient.run(host: host, ["--json"])
             let snapshot = data.flatMap { try? JSONDecoder().decode(TmuxSnapshot.self, from: $0) }
             await MainActor.run {

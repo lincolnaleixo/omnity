@@ -157,6 +157,8 @@ struct SBNow: Equatable, Identifiable {
     var age: String
     /// The question of the window when it waits for Lincoln (shown on the same row, never as a separate agent).
     var question: String?
+    /// Unit view: the task of the window this Omnity window shows (first row, highlighted).
+    var here = false
     var id: String { task.id }
 }
 
@@ -167,10 +169,8 @@ struct SBNow: Equatable, Identifiable {
 struct SBPanel: Equatable {
     var unit: String?
     /// In-progress tasks (one per agent window); a waiting window's question rides on its row.
+    /// Unit view: the current window's task comes first (`here`).
     var now: [SBNow] = []
-    /// Unit view only: the task the current window works on, shown in the header line, not in `now`.
-    var workingHere: SBTask?
-    var workingQuestion: String?
     /// Waiting agents (of the unit, or all) that no in-progress task already shows.
     var waiting: [SBAgent] = []
     /// Every non-idle window that no in-progress task shows (the command and cards Today lists).
@@ -185,8 +185,8 @@ struct SBPanel: Equatable {
 
     /// What each style prints in each mode, as (task ids, window ids): the gate that nothing appears twice.
     func shown(_ style: SidebarStyle) -> (tasks: [String], windows: [String]) {
-        var t = now.map(\.task.id) + (workingHere.map { [$0.id] } ?? [])
-        var w = now.map { $0.windowID ?? $0.label } + (workingHere == nil ? [] : ["working-here"])
+        var t = now.map(\.task.id)
+        var w = now.map { $0.windowID ?? $0.label }
         let timed = lists.today.filter { !SidebarLogic.time($0).isEmpty }, anytime = lists.today.filter { SidebarLogic.time($0).isEmpty }
         switch (style, unit == nil) {
         case (.editorial, true), (.command, true): t += (lists.overdue + lists.today).map(\.id); w += (style == .command ? agentsAll : waiting).map(\.windowID)
@@ -205,20 +205,20 @@ extension SidebarLogic {
                       unitIDs: Set<String>, today: String, at: Date) -> SBPanel {
         var p = SBPanel(unit: unit)
         // In progress: one task per window, the first wins (live before stale); the rest stay in the lists.
-        var seen = Set<String>(), mine: SBTask?
+        var seen = Set<String>()
         let here = current.map { "\($0.session)/\($0.window.name)" }
-        for n in now(tasks, unit: unit, sessions: sessions, at: at) where seen.insert(n.label).inserted {
-            if unit != nil, n.label == here, !n.stale, mine == nil { mine = n.task; p.workingQuestion = n.question; continue }
+        for var n in now(tasks, unit: unit, sessions: sessions, at: at) where seen.insert(n.label).inserted {
+            n.here = unit != nil && n.label == here && !n.stale
             p.now.append(n)
         }
-        p.workingHere = mine
-        let shownTasks = Set(p.now.map(\.id) + (mine.map { [$0.id] } ?? []))
+        // Stable: the current window's row first, the others keep their order (live before stale).
+        p.now = p.now.filter(\.here) + p.now.filter { !$0.here }
+        let shownTasks = Set(p.now.map(\.id))
         var l = lists(tasks, unit: unit, today: today)
         l.overdue.removeAll { shownTasks.contains($0.id) }; l.today.removeAll { shownTasks.contains($0.id) }; l.open.removeAll { shownTasks.contains($0.id) }
         p.lists = l
-        // Windows already on a Now row (or the header line) are not listed again as agents.
+        // Windows already on a Now row are not listed again as agents.
         var taken = Set(p.now.compactMap(\.windowID))
-        if mine != nil, let c = current { taken.insert(c.window.id) }
         let waitingAll = agents(sessions, now: at)
         p.waitingTotal = waitingAll.count
         let scoped = unit == nil ? waitingAll : waitingAll.filter { a in

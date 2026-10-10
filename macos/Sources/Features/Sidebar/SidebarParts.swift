@@ -549,6 +549,8 @@ struct SBAgentRow: View {
     let agent: SBAgent
     var style: SidebarStyle
     var key: Int?
+    /// The window this Omnity window shows: a "this window" tag and a tint.
+    var here = false
     /// A stale marker: grey dot and text.
     var muted = false
     /// A stale Now row: the task id whose `doing` marker the Clear button removes.
@@ -563,6 +565,7 @@ struct SBAgentRow: View {
             SBDot(color: muted ? SB.t4 : SB.stateColor(agent.state), size: compact ? 8 : 9, pulse: agent.state == "waiting")
             if let key { Text("\(key)").foregroundColor(SB.t4).frame(width: 14, alignment: .leading) }
             Text(agent.key).fontWeight(.semibold).foregroundColor(muted ? SB.t3 : SB.t1).lineLimit(1).fixedSize()
+            if here { Text("this window").font(.system(size: SB.fs(11))).foregroundColor(SB.busy).lineLimit(1).fixedSize() }
             Text(agent.query).foregroundColor(muted ? SB.t4 : SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             Text(muted ? "stale" : agent.age).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
             if let id = clearID { SBPillButton(title: "Clear") { store.clearDoing(id) } }
@@ -577,6 +580,9 @@ struct SBAgentRow: View {
         .padding(.vertical, SB.u(style == .command ? 6 : (style == .timeline ? 6 : 10)))
         .background {
             let isWait = agent.state == "waiting"
+            if here, style != .cards, style != .command {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(SB.busy.opacity(0.1))
+            }
             if style == .cards {
                 RoundedRectangle(cornerRadius: SB.u(14), style: .continuous)
                     .fill(isWait ? SB.wait.opacity(0.1) : SB.t1.opacity(0.05))

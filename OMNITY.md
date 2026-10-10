@@ -31,6 +31,9 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   line (amber from 80%, red from 90%, hover for load, GB and top process), read over the switcher's ssh connection
   (/proc and df, nothing installed; CPU/MEM every 5 s, disk every 60 s, paused when Omnity is in the background).
   Labels, then the whole block, drop when the tabs need the room. `OMNITY_HOST_STATS_FIXTURE=<file>` feeds it a captured output.
+- Several tmux clients (another Mac, another window): Omnity passes its window's ssh source port (`lsof` of the foreground `ssh`)
+  as `tmux-switch --peer PORT`, which puts that window's own client first, so the sidebar and tab bar follow THIS window, not the
+  client with the latest activity. In the sidebar's unit view the current window's in-progress task is the first Now row ("this window").
 - Sidebar rule: every task and every agent window appears once in the whole panel (an in-progress task carries its waiting window's question on its Now row), an empty section is not drawn, zero counts are left out of sentences, and a list's empty state starts at the same left edge as its title (gates: SidebarTests `everyItemAppearsOnceInEveryStyleAndMode`, `rowsAndEmptyStateShareTheLeadingInset`).
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).

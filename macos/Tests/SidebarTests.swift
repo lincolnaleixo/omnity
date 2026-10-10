@@ -171,12 +171,28 @@ struct SidebarTests {
         #expect(Set(p.lists.all.map(\.id)) == ["d", "e", "f", "g", "h"])  // "d" shares a window with "b": it stays in the lists
         #expect(p.needsTitle == "Needs you")
     }
-    @Test func currentWindowTaskIsOnlyInTheHeaderLine() {
+    @Test func currentWindowTaskIsFirstAndMarked() {
         let f = fixture(current: "@3")
-        let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: "omni", current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date())
-        #expect(p.workingHere?.id == "b" && p.workingQuestion == "merge ok?")
-        #expect(!p.now.contains { $0.id == "b" } && !p.waiting.contains { $0.windowID == "@3" })
-        #expect(!p.lists.all.contains { $0.id == "b" })
+        let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: "omni", current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date(timeIntervalSince1970: 1_000))
+        #expect(p.now.map(\.id) == ["b", "c"])                           // "b" runs in the current window tools/omni; stale "c" last
+        #expect(p.now.map(\.here) == [true, false] && p.now[0].question == "merge ok?")
+        #expect(!p.waiting.contains { $0.windowID == "@3" } && !p.lists.all.contains { $0.id == "b" })
+        // Another window of the unit is current: the order is the server's, nothing is marked, the window still shows once.
+        let g = fixture(current: "@4")
+        let q = SidebarLogic.panel(tasks: g.tasks, sessions: g.sessions, unit: "omni", current: g.cur, unitIDs: g.units, today: "2026-10-09", at: Date(timeIntervalSince1970: 1_000))
+        #expect(q.now.map(\.id) == ["b", "c"] && q.now.allSatisfy { !$0.here })
+        // Today mode never marks a row.
+        let r = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: nil, current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date(timeIntervalSince1970: 1_000))
+        #expect(r.now.allSatisfy { !$0.here })
+    }
+    @Test func currentWindowTaskMovesAheadOfOthers() {
+        let sessions = [TmuxSession(name: "ecom", windows: [win("@1", "lln", "busy"), win("@2", "lln2", "busy")])]
+        let tasks = [SBTask(id: "x", unit: "longlifenutri", title: "Other", doing: "ecom/lln2"),
+                     SBTask(id: "y", unit: "longlifenutri", title: "Mine", doing: "ecom/lln")]
+        let cur = (session: "ecom", window: sessions[0].windows[0])
+        let p = SidebarLogic.panel(tasks: tasks, sessions: sessions, unit: "longlifenutri", current: cur, unitIDs: ["longlifenutri"], today: "2026-10-09", at: Date())
+        #expect(p.now.map(\.id) == ["y", "x"] && p.now.map(\.here) == [true, false])
+        #expect(p.now.map(\.label) == ["ecom/lln", "ecom/lln2"])
     }
     @Test func emptyTodayHasNoWaitingSection() {
         let p = SidebarLogic.panel(tasks: [], sessions: [TmuxSession(name: "t", windows: [win("@1", "x", "idle")])], unit: nil, current: nil, unitIDs: [], today: "2026-10-09", at: Date())

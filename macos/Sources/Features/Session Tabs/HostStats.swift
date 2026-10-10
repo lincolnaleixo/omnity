@@ -77,9 +77,10 @@ enum HostStatsParser {
         }
         guard gotCPU, s.memTotalKB > 0 else { return nil }
         if parts.count > 1 {
-            let rest = parts[1].split(separator: "\n", omittingEmptySubsequences: true)
-            s.disk = df(rest.dropLast().joined(separator: "\n"))
-            s.top = rest.last.flatMap { top(String($0)) }
+            // Each line on its own: a missing or odd `ps` line must not cost the disk (a stale DISK stayed on screen).
+            for line in parts[1].split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
+                if let d = df(line) { s.disk = d } else if let t = top(line) { s.top = t }
+            }
         }
         return s
     }
@@ -96,6 +97,20 @@ enum HostStatsParser {
     static func gb(_ bytes: UInt64) -> String { String(format: "%.1f", Double(bytes) / 1_073_741_824) }
 }
 
+/// The last disk reading. Disk is read every 60 s; one older than `maxAge` is dropped, never shown as current.
+struct HostDiskCache {
+    static let every: TimeInterval = 60, maxAge: TimeInterval = 180
+    private var disk: HostDisk?, top: String?
+    private var at = Date.distantPast
+    func due(_ now: Date) -> Bool { now.timeIntervalSince(at) >= Self.every }
+    mutating func update(_ s: HostStatsSample, now: Date) {
+        guard let d = s.disk else { return }
+        disk = d; top = s.top; at = now
+    }
+    func current(_ now: Date) -> (disk: HostDisk?, top: String?) {
+        now.timeIntervalSince(at) <= Self.maxAge ? (disk, top) : (nil, nil)
+    }
+}
 // MARK: - Display state
 
 /// What the bar shows. Equatable so an unchanged tick publishes nothing.
@@ -127,8 +142,7 @@ final class HostStats: ObservableObject {
     @Published private(set) var state = HostStatsState()
     private var timer: Timer?
     private var prev: HostStatsSample?
-    private var disk: HostDisk?, top: String?
-    private var diskAt = Date.distantPast
+    private var diskCache = HostDiskCache()
     private var inFlight = false
 
     func install() {
@@ -145,16 +159,17 @@ final class HostStats: ObservableObject {
         let host = SessionTabs.shared.host
         guard !host.isEmpty else { return }
         inFlight = true
-        let withDisk = Date().timeIntervalSince(diskAt) >= 60
+        let withDisk = diskCache.due(Date())
         Task {
             var out = await read(host: host, disk: withDisk)
             // The first sample has nothing to compare with: take a second one right away.
-            if out != nil, self.prev == nil {
-                self.prev = out
+            if let first = out, self.prev == nil {
+                self.prev = first
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 out = await read(host: host, disk: false)
+                out?.disk = first.disk; out?.top = first.top   // keep the disk of the first read
             }
-            await MainActor.run { self.apply(out, withDisk: withDisk) }
+            await MainActor.run { self.apply(out) }
         }
     }
 
@@ -167,11 +182,13 @@ final class HostStats: ObservableObject {
         return HostStatsParser.parse(String(decoding: r.out, as: UTF8.self))
     }
 
-    private func apply(_ s: HostStatsSample?, withDisk: Bool) {
+    private func apply(_ s: HostStatsSample?) {
         inFlight = false
         var next = state
+        let now = Date()
         if let s {
-            if withDisk, let d = s.disk { disk = d; top = s.top; diskAt = Date() }
+            diskCache.update(s, now: now)
+            let (disk, top) = diskCache.current(now)
             next = HostStatsState(
                 fresh: true, cpu: prev.flatMap { HostStatsParser.cpuPercent(from: $0, to: s) } ?? state.cpu,
                 memUsedKB: s.memTotalKB - min(s.memAvailKB, s.memTotalKB), memTotalKB: s.memTotalKB,
@@ -179,6 +196,7 @@ final class HostStats: ObservableObject {
             prev = s
         } else {
             next.fresh = false
+            (next.disk, next.top) = diskCache.current(now)
         }
         if next != state { state = next }
     }

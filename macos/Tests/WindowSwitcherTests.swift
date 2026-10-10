@@ -425,4 +425,10 @@ struct WindowSwitcherTests {
         let font = (CTRunGetAttributes(run) as! [CFString: Any])[kCTFontAttributeName] as! CTFont
         #expect((CTFontCopyFamilyName(font) as String).contains("Symbols"))
     }
+    @Test func sshLocalPortFromLsof() {
+        let out = "p75002\nf3\nn192.168.0.44:54773->162.55.194.190:22\nf5\nn*:59869\n"
+        #expect(TmuxSwitchClient.localPort(lsof: out) == "54773")
+        #expect(TmuxSwitchClient.localPort(lsof: "p1\nf5\nn*:59869\n") == nil)
+        #expect(TmuxSwitchClient.localPort(lsof: "") == nil)
+    }
 }

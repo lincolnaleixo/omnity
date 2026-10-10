@@ -173,6 +173,14 @@ final class SessionTabs: ObservableObject {
         return SessionTabsModel.attached(argv: argv, host: host)
     }
 
+    /// Omnity: the foreground process (`ssh <host>`) of the key window's terminal, nil when none is key.
+    @MainActor func keyForegroundPID() -> pid_t? {
+        guard !TmuxSwitchClient.local,
+              let surface = NSApp.keyWindow?.firstResponder as? Ghostty.SurfaceView,
+              let pid = surface.surfaceModel?.foregroundPID, attached(surface) else { return nil }
+        return pid_t(pid)
+    }
+
     // MARK: Keys
 
     @MainActor private func handle(_ event: NSEvent) -> NSEvent? {
