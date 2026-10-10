@@ -494,7 +494,7 @@ struct SBSection<Content: View, Extra: View>: View {
 
     init(store: SidebarStore, id: String, title: String, count: String, style: SidebarStyle = .editorial, titleColor: Color? = nil,
          @ViewBuilder extra: () -> Extra, @ViewBuilder content: () -> Content) {
-        self.store = store; self.id = id; self.collapsed = store.collapsed.contains(id)
+        self.store = store; self.id = id; self.collapsed = store.isCollapsed(id)
         self.title = title; self.count = count; self.style = style
         self.titleColor = titleColor; self.extra = extra(); self.content = content()
     }
@@ -542,6 +542,42 @@ extension SBSection where Extra == EmptyView {
     }
 }
 
+/// The unit's README, collapsed by default, under the other sections of a unit view (all styles).
+struct SBReadmeSection: View {
+    @ObservedObject var store: SidebarStore
+    let style: SidebarStyle
+    @Environment(\.sbMono) private var mono
+    var body: some View {
+        if let u = store.unit, let md = store.context?.readme, !md.isEmpty {
+            let section = SBSection(store: store, id: "readme:\(u)", title: "README", count: "", style: style) { content(md) }
+            if style == .cards { section.padding(SB.u(20)).frame(maxWidth: .infinity, alignment: .leading).sbGlass(radius: SB.u(24)) }
+            else if style == .command { section.padding(.top, SB.u(12)).padding(.horizontal, SB.u(10)) }
+            else { section.padding(.top, SB.u(14)) }
+        }
+    }
+    private func inline(_ s: String) -> Text {
+        let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return Text((try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s))
+    }
+    private func content(_ md: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(SidebarLogic.readme(md).enumerated()), id: \.offset) { _, b in
+                switch b {
+                case .heading(let l, let t):
+                    inline(t).font(.system(size: SB.fs(l <= 1 ? 15 : 13.5), weight: .semibold)).foregroundColor(SB.t1).padding(.top, 4)
+                case .bullet(let t):
+                    HStack(alignment: .firstTextBaseline, spacing: 8) { Text("\u{2022}").foregroundColor(SB.t4); inline(t).foregroundColor(SB.t2) }
+                        .font(.system(size: SB.fs(13)))
+                case .text(let t):
+                    inline(t).font(.system(size: SB.fs(13))).foregroundColor(SB.t2)
+                }
+            }
+        }
+        .tint(SB.busy)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 // MARK: - Shared rows
 
 struct SBAgentRow: View {

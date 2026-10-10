@@ -40,6 +40,9 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
 - Lesson: a local event monitor returns `OmnityMonitor.run(self, event) { $0.handle($1) }`, never `handle(event) ?? event`
   (that turns a swallowed key back into the event: tmux got option+digit as well as Omnity's `--go`).
 - Option+digit belongs to tmux (M-1...9); the sidebar jumps to Now row N with control+option+N.
+- Which unit a window belongs to comes from the host: `tmux-switch --json` adds `unit` to each window (folder named like the
+  window, else `~/.config/omni/window-units`, the rule of `session-unit`); the hard-coded aliases serve old snapshots only.
+  Unit mode ends with a collapsed README section (from `omni-unit-context`'s `readme`), remembered per unit.
 - Sidebar rule: every task and every agent window appears once in the whole panel (an in-progress task carries its waiting window's question on its Now row), an empty section is not drawn, zero counts are left out of sentences, and a list's empty state starts at the same left edge as its title (gates: SidebarTests `everyItemAppearsOnceInEveryStyleAndMode`, `rowsAndEmptyStateShareTheLeadingInset`).
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).

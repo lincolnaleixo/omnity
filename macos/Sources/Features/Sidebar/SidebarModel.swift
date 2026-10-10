@@ -115,8 +115,13 @@ struct SBUnitContext: Codable, Equatable {
     var goal: String
     var kpis: [SBKpi]
     var blueprint: SBBlueprint?
+    /// The unit's README.md (the host sends up to 20000 characters; nil from an older host).
+    var readme: String?
 }
 
+enum SBReadmeBlock: Equatable {
+    case heading(Int, String), bullet(String), text(String)
+}
 struct SBHistory: Equatable {
     var ai: Bool
     var date: String
@@ -223,8 +228,9 @@ extension SidebarLogic {
         var taken = Set(p.now.compactMap(\.windowID))
         let waitingAll = agents(sessions, now: at)
         p.waitingTotal = waitingAll.count
+        let byID = Dictionary(sessions.flatMap(\.windows).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let scoped = unit == nil ? waitingAll : waitingAll.filter { a in
-            Self.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs) == unit
+            Self.unit(forWindow: String(a.key.split(separator: ":").last ?? ""), units: unitIDs, snapshot: byID[a.windowID]?.unit) == unit
         }
         p.waiting = scoped.filter { !taken.contains($0.windowID) }
         let rank = ["waiting": 0, "busy": 1, "bg": 2, "stale": 3]
@@ -276,10 +282,31 @@ enum SidebarStyle: String, CaseIterable, Equatable {
 // MARK: - Rules
 
 enum SidebarLogic {
+    /// A README as blocks: `#` headings, `-`/`*` bullets and text lines (inline markdown is left for the view). Blank lines,
+    /// front matter fences and code fences are dropped.
+    static func readme(_ md: String) -> [SBReadmeBlock] {
+        var out: [SBReadmeBlock] = [], fence = false
+        for raw in md.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") { fence.toggle(); continue }
+            if fence || line.isEmpty || line == "---" { continue }
+            let hashes = line.prefix { $0 == "#" }.count
+            if (1...6).contains(hashes), line.dropFirst(hashes).first == " " {
+                out.append(.heading(hashes, String(line.dropFirst(hashes + 1)).trimmingCharacters(in: .whitespaces)))
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                out.append(.bullet(String(line.dropFirst(2))))
+            } else {
+                out.append(.text(line))
+            }
+        }
+        return out
+    }
     static let aliases = ["lln": "longlifenutri", "tfp": "the-furry-pack", "silas": "silas-mullins"]
 
     /// The unit folder named by a tmux window: an alias, or the exact folder name (the rule of ow-sort).
-    static func unit(forWindow name: String, units: Set<String>) -> String? {
+    /// The host's answer (`snapshot`, from `tmux-switch --json`) wins when present; the aliases only serve old snapshots.
+    static func unit(forWindow name: String, units: Set<String>, snapshot: String? = nil) -> String? {
+        if let s = snapshot, units.contains(s) { return s }
         let n = name.trimmingCharacters(in: .whitespaces)
         if let a = aliases[n], units.contains(a) { return a }
         return units.contains(n) ? n : nil

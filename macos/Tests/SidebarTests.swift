@@ -271,4 +271,36 @@ struct SidebarTests {
         store.setStyle(.command)
         #expect(SidebarStore().style == .command)
     }
+    // MARK: Unit from the host, README
+    @Test func snapshotUnitWinsOverAliases() throws {
+        let units: Set<String> = ["longlifenutri", "omni", "the-furry-pack"]
+        #expect(SidebarLogic.unit(forWindow: "tasker", units: units, snapshot: "omni") == "omni")   // learned map
+        #expect(SidebarLogic.unit(forWindow: "lln", units: units, snapshot: "the-furry-pack") == "the-furry-pack")
+        #expect(SidebarLogic.unit(forWindow: "lln", units: units) == "longlifenutri")                 // old snapshot: alias
+        #expect(SidebarLogic.unit(forWindow: "tasker", units: units, snapshot: "gone") == nil)
+        let json = #"{"current":null,"sessions":[{"name":"ecom","windows":[{"id":"@1","name":"lln","unit":"longlifenutri"},{"id":"@2","name":"x","unit":null},{"id":"@3","name":"y"}]}]}"#
+        let snap = try JSONDecoder().decode(TmuxSnapshot.self, from: Data(json.utf8))
+        #expect(snap.sessions[0].windows.map(\.unit) == ["longlifenutri", nil, nil])
+    }
+    @Test func readmeBlocks() {
+        let md = "# Title\n\nSome **bold** text with [a link](https://x.y).\n- one\n* two\n```\n# not a heading\n```\n## Sub\n#hashtag\n---\n"
+        #expect(SidebarLogic.readme(md) == [.heading(1, "Title"), .text("Some **bold** text with [a link](https://x.y)."),
+                                            .bullet("one"), .bullet("two"), .heading(2, "Sub"), .text("#hashtag")])
+        #expect(SidebarLogic.readme("").isEmpty)
+    }
+    @Test @MainActor func readmeStartsCollapsedAndToggles() {
+        let store = SidebarStore.shared
+        let id = "readme:test-unit-\(UUID().uuidString)"
+        #expect(store.isCollapsed(id))
+        store.toggleSection(id)
+        #expect(!store.isCollapsed(id))
+        store.toggleSection(id)
+        #expect(store.isCollapsed(id))
+    }
+    @Test func contextDecodesReadme() throws {
+        let json = ##"{"unit":"u","title":"U","kind":"","type":"","stage":"","goal":"","kpis":[],"readme":"# U"}"##
+        #expect(try JSONDecoder().decode(SBUnitContext.self, from: Data(json.utf8)).readme == "# U")
+        let old = #"{"unit":"u","title":"U","kind":"","type":"","stage":"","goal":"","kpis":[]}"#
+        #expect(try JSONDecoder().decode(SBUnitContext.self, from: Data(old.utf8)).readme == nil)
+    }
 }

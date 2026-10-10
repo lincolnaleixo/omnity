@@ -81,6 +81,10 @@ final class SidebarStore: ObservableObject {
     @Published var selection: String?
     @Published var expanded: Set<String> = []
     @Published var collapsed: Set<String> = []
+    /// README sections the user opened ("readme:<unit>"); they start collapsed and are remembered.
+    @Published var opened: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "omnity.sidebar.readmeOpen") ?? [])
+    /// Sections that start collapsed use `opened`; the others use `collapsed`.
+    func isCollapsed(_ id: String) -> Bool { id.hasPrefix("readme:") ? !opened.contains(id) : collapsed.contains(id) }
     @Published private(set) var completing: Set<String> = []
     @Published private(set) var doneCount = 0
     @Published private(set) var toast: SBToast?
@@ -163,7 +167,7 @@ final class SidebarStore: ObservableObject {
         var d = SBDerived()
         let sessions = switcher.sessions
         let cur = currentWindow
-        let unit = cur.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: unitIDs) }
+        let unit = cur.flatMap { SidebarLogic.unit(forWindow: $0.window.name, units: unitIDs, snapshot: $0.window.unit) }
         d.panel = SidebarLogic.panel(tasks: tasks, sessions: sessions, unit: unit, current: cur, unitIDs: unitIDs, today: today, at: now)
         d.dueNowIDs = Set(SidebarLogic.dueNow(tasks, unit: unit, today: today, now: nowHM).map(\.id))
         d.todaysEvents = events.filter { !$0.allDay }.sorted { $0.start < $1.start }
@@ -384,7 +388,7 @@ final class SidebarStore: ObservableObject {
         guard panels > 0 || (enabled && shown) else { return }
         for s in switcher.sessions {
             for w in s.windows {
-                guard let u = SidebarLogic.unit(forWindow: w.name, units: unitIDs), contexts[u] == nil, contextAt[u] == nil else { continue }
+                guard let u = SidebarLogic.unit(forWindow: w.name, units: unitIDs, snapshot: w.unit), contexts[u] == nil, contextAt[u] == nil else { continue }
                 fetchContext(u)
             }
         }
@@ -498,7 +502,10 @@ final class SidebarStore: ObservableObject {
 
     func toggleSection(_ id: String) {
         withAnimation(.smooth(duration: 0.28)) {
-            if collapsed.contains(id) { collapsed.remove(id) } else { collapsed.insert(id) }
+            if id.hasPrefix("readme:") {
+                if opened.contains(id) { opened.remove(id) } else { opened.insert(id) }
+                UserDefaults.standard.set(Array(opened), forKey: "omnity.sidebar.readmeOpen")
+            } else if collapsed.contains(id) { collapsed.remove(id) } else { collapsed.insert(id) }
         }
     }
 

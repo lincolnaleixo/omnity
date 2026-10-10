@@ -100,7 +100,7 @@ struct EditorialView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 top
-                if unit == nil { today(L) } else { unitView(L) }
+                if unit == nil { today(L) } else { unitView(L); SBReadmeSection(store: store, style: .editorial) }
                 foot
             }
             .padding(.horizontal, SB.u(38)).padding(.top, SB.u(34)).padding(.bottom, SB.u(26))
@@ -289,7 +289,7 @@ struct CardsView: View {
             : ids(store, "nd", store.derived.panel.needsTasks) + ids(store, "op", L.open)
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: SB.u(14)) {
-                if unit == nil { today(L) } else { unitView(L) }
+                if unit == nil { today(L) } else { unitView(L); SBReadmeSection(store: store, style: .cards) }
             }
             .padding(.bottom, SB.u(20))
         }
@@ -485,6 +485,7 @@ struct DayTimelineView: View {
                     if unitFilter != nil, !store.ready || !L.open.isEmpty {
                         section("op", "Open", "\(L.open.count)") { SBRows(store: store, tasks: capped(L.open, 5), spec: spec, showHist: true, bleed: spec.bleed) }
                     }
+                    if unitFilter != nil { SBReadmeSection(store: store, style: .timeline) }
                 }
                 .padding(.horizontal, SB.u(26)).padding(.top, SB.u(6)).padding(.bottom, SB.u(22))
             }
@@ -750,6 +751,7 @@ struct CommandView: View {
         } else {
             if let b = store.context?.blueprint { sec("bp", "Blueprint next", "\(b.next.count)") { SBBlueprintList(items: b.next, size: 13, limit: 5) } }
             if !store.ready || !L.open.isEmpty { sec("op", "Open", "\(L.open.count)") { rows(capped(L.open, 12), hist: true) } }
+            SBReadmeSection(store: store, style: .command)
         }
     }
 

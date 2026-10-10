@@ -22,6 +22,8 @@ struct TmuxWindow: Decodable, Identifiable, Equatable {
     var activity: Double?
     var last_used: Double?
     var active: Bool?
+    /// Omnity: the window's unit as `tmux-switch --json` resolves it (folder named like the window, else the learned map).
+    var unit: String?
 }
 
 struct TmuxSession: Decodable, Equatable {
