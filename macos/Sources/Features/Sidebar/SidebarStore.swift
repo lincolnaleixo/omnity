@@ -226,7 +226,7 @@ final class SidebarStore: ObservableObject {
                 }
             }.store(in: &bag)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .leftMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated { self?.handle(event) ?? event }
+            MainActor.assumeIsolated { OmnityMonitor.run(self, event) { $0.handle($1) } }
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main

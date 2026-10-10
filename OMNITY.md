@@ -37,6 +37,8 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
 - Lessons: never assume the tmux client with the latest activity is this window (several clients exist: pass the window's own ssh
   port to `tmux-switch --peer`); a cached host reading needs an age limit (`HostDiskCache`), or a failed refresh leaves an old value
   on screen as if it were current.
+- Lesson: a local event monitor returns `OmnityMonitor.run(self, event) { $0.handle($1) }`, never `handle(event) ?? event`
+  (that turns a swallowed key back into the event: tmux got option+digit as well as Omnity's `--go`).
 - Sidebar rule: every task and every agent window appears once in the whole panel (an in-progress task carries its waiting window's question on its Now row), an empty section is not drawn, zero counts are left out of sentences, and a list's empty state starts at the same left edge as its title (gates: SidebarTests `everyItemAppearsOnceInEveryStyleAndMode`, `rowsAndEmptyStateShareTheLeadingInset`).
 - Name Omnity (menu bar via `omnity-build.sh`, app menu, About, quit dialog), bundle id `com.lincolnaleixo.omnity`, orange icon.
 - Sparkle updates disabled (never pulls Ghostty releases).

@@ -94,6 +94,15 @@ enum SessionTabsKey: Equatable {
     case nativeTab(Int)
 }
 
+/// Omnity: the result of a local event monitor. `handle(...) ?? event` would turn a swallowed key (nil) back into the
+/// event, so the terminal (tmux) got the key as well as Omnity's action (option+digit: Omnity sent `--go` AND tmux ran its M-N).
+enum OmnityMonitor {
+    static func run<T: AnyObject>(_ owner: T?, _ event: NSEvent, _ handle: (T, NSEvent) -> NSEvent?) -> NSEvent? {
+        guard let owner else { return event }
+        return handle(owner, event)
+    }
+}
+
 enum SessionTabsKeys {
     /// Key codes of 1...9 on the number row.
     static let digits: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
@@ -148,7 +157,7 @@ final class SessionTabs: ObservableObject {
         }.store(in: &bag)
         HostStats.shared.install()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            MainActor.assumeIsolated { self?.handle(event) ?? event }
+            MainActor.assumeIsolated { OmnityMonitor.run(self, event) { $0.handle($1) } }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main

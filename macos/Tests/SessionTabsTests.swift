@@ -18,6 +18,17 @@ struct SessionTabsTests {
     }
     let sessions = ["youtube", "Tools", "ecom", "personal", "alpha"].map { session($0) }
 
+    // MARK: Event monitors
+    @Test func swallowedKeyStaysSwallowed() throws {
+        let e = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .option, timestamp: 0,
+                                              windowNumber: 0, context: nil, characters: "2", charactersIgnoringModifiers: "2",
+                                              isARepeat: false, keyCode: 19))
+        final class Owner {}
+        let o = Owner()
+        #expect(OmnityMonitor.run(o, e) { _, _ in nil } == nil)          // handled: the terminal must not see it
+        #expect(OmnityMonitor.run(o, e) { _, ev in ev } === e)           // not ours: passes on
+        #expect(OmnityMonitor.run(nil as Owner?, e) { _, _ in nil } === e)  // owner gone: passes on
+    }
     // MARK: Order
 
     @Test func alphabeticalByDefault() {
