@@ -174,8 +174,8 @@ struct SidebarTests {
     @Test func currentWindowTaskIsFirstAndMarked() {
         let f = fixture(current: "@3")
         let p = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: "omni", current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date(timeIntervalSince1970: 1_000))
-        #expect(p.now.map(\.id) == ["b", "c"])                           // "b" runs in the current window tools/omni; stale "c" last
-        #expect(p.now.map(\.here) == [true, false] && p.now[0].question == "merge ok?")
+        #expect(p.now.map(\.id) == ["b", "d", "c"])                      // "b" and "d" run in the current window tools/omni; stale "c" last
+        #expect(p.now.map(\.here) == [true, true, false] && p.now[0].question == "merge ok?" && p.now[1].question == nil)
         #expect(!p.waiting.contains { $0.windowID == "@3" } && !p.lists.all.contains { $0.id == "b" })
         // Another window of the unit is current: the order is the server's, nothing is marked, the window still shows once.
         let g = fixture(current: "@4")
@@ -184,6 +184,24 @@ struct SidebarTests {
         // Today mode never marks a row.
         let r = SidebarLogic.panel(tasks: f.tasks, sessions: f.sessions, unit: nil, current: f.cur, unitIDs: f.units, today: "2026-10-09", at: Date(timeIntervalSince1970: 1_000))
         #expect(r.now.allSatisfy { !$0.here })
+    }
+    @Test func currentWindowListsEveryTaskItWorksOn() {
+        let sessions = [TmuxSession(name: "ecom", windows: [win("@1", "lln", "waiting", "ok?"), win("@2", "rcgc", "busy")])]
+        let tasks = [SBTask(id: "o", unit: "longlifenutri", title: "Other window", doing: "ecom/rcgc"),
+                     SBTask(id: "1", unit: "longlifenutri", title: "One", doing: "ecom/lln"),
+                     SBTask(id: "2", unit: "longlifenutri", title: "Two", doing: "ecom/lln"),
+                     SBTask(id: "3", unit: "longlifenutri", title: "Three", doing: "ecom/lln"),
+                     SBTask(id: "4", unit: "longlifenutri", title: "Four", doing: "ecom/lln"),
+                     SBTask(id: "p", unit: "longlifenutri", title: "Other too", doing: "ecom/rcgc")]
+        let cur = (session: "ecom", window: sessions[0].windows[0])
+        let p = SidebarLogic.panel(tasks: tasks, sessions: sessions, unit: "longlifenutri", current: cur, unitIDs: ["longlifenutri"], today: "2026-10-09", at: Date())
+        #expect(p.now.map(\.id) == ["1", "2", "3", "4", "o"])               // 4 rows for this window in list order, one row for the other
+        #expect(p.now.map(\.here) == [true, true, true, true, false])
+        #expect(p.now.map { $0.question != nil } == [true, false, false, false, false])  // the question shows once
+        for style in SidebarStyle.allCases {
+            let s = p.shown(style)
+            #expect(Set(s.tasks).count == s.tasks.count && Set(s.windows).count == s.windows.count)
+        }
     }
     @Test func currentWindowTaskMovesAheadOfOthers() {
         let sessions = [TmuxSession(name: "ecom", windows: [win("@1", "lln", "busy"), win("@2", "lln2", "busy")])]

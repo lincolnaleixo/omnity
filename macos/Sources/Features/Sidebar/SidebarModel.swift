@@ -186,7 +186,7 @@ struct SBPanel: Equatable {
     /// What each style prints in each mode, as (task ids, window ids): the gate that nothing appears twice.
     func shown(_ style: SidebarStyle) -> (tasks: [String], windows: [String]) {
         var t = now.map(\.task.id)
-        var w = now.map { $0.windowID ?? $0.label }
+        var w = Array(NSOrderedSet(array: now.map { $0.windowID ?? $0.label })) as? [String] ?? []   // the current window's rows share one window
         let timed = lists.today.filter { !SidebarLogic.time($0).isEmpty }, anytime = lists.today.filter { SidebarLogic.time($0).isEmpty }
         switch (style, unit == nil) {
         case (.editorial, true), (.command, true): t += (lists.overdue + lists.today).map(\.id); w += (style == .command ? agentsAll : waiting).map(\.windowID)
@@ -205,10 +205,12 @@ extension SidebarLogic {
                       unitIDs: Set<String>, today: String, at: Date) -> SBPanel {
         var p = SBPanel(unit: unit)
         // In progress: one task per window, the first wins (live before stale); the rest stay in the lists.
-        var seen = Set<String>()
+        // The current window (unit view) lists every task it works on, its question only on the first row.
+        var seen = Set<String>(), hereAsked = false
         let here = current.map { "\($0.session)/\($0.window.name)" }
-        for var n in now(tasks, unit: unit, sessions: sessions, at: at) where seen.insert(n.label).inserted {
+        for var n in now(tasks, unit: unit, sessions: sessions, at: at) {
             n.here = unit != nil && n.label == here && !n.stale
+            if n.here { if hereAsked { n.question = nil }; hereAsked = true } else if !seen.insert(n.label).inserted { continue }
             p.now.append(n)
         }
         // Stable: the current window's row first, the others keep their order (live before stale).
