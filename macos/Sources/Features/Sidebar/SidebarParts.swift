@@ -542,40 +542,112 @@ extension SBSection where Extra == EmptyView {
     }
 }
 
+/// The README text itself (no store), so it can be rendered on its own.
+struct SBReadmeBody: View {
+    let md: String
+    var style: SidebarStyle = .editorial
+    @Environment(\.sbMono) private var mono
+    private var size: CGFloat { style == .command ? 12.5 : 13 }
+    private var base: Font { mono ?? .system(size: SB.fs(size)) }
+    /// Bare URLs become short links (the host); inline code gets a monospace font and a subtle background; with
+    /// `label`, a leading "Label:" is set in medium weight.
+    static func inline(_ s: String, label: Bool = false, size: CGFloat = 13) -> AttributedString {
+        var text = s
+        if let re = try? NSRegularExpression(pattern: #"(?<![(\[/\w])(https?://([^\s/)\]>,]+)[^\s)\]>,]*)"#) {
+            let ns = text as NSString
+            for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+                var url = ns.substring(with: m.range(at: 1))
+                while let l = url.last, ".,;:".contains(l) { url.removeLast() }
+                var host = ns.substring(with: m.range(at: 2))
+                while let l = host.last, ".,;:".contains(l) { host.removeLast() }
+                text = (text as NSString).replacingCharacters(in: NSRange(location: m.range.location, length: url.count), with: "[\(host)](\(url))")
+            }
+        }
+        let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        var a = (try? AttributedString(markdown: text, options: opts)) ?? AttributedString(s)
+        for run in a.runs where run.inlinePresentationIntent?.contains(.code) == true {
+            a[run.range].font = .system(size: SB.fs(size - 1), design: .monospaced)
+            a[run.range].backgroundColor = SB.t1.opacity(0.1)
+            a[run.range].foregroundColor = SB.t1
+        }
+        if label, let colon = a.characters.firstIndex(of: ":"), a.characters.distance(from: a.startIndex, to: colon) <= 32,
+           a.runs.first(where: { $0.range.contains(colon) })?.inlinePresentationIntent == nil,
+           a[a.startIndex..<colon].runs.allSatisfy({ $0.link == nil && $0.inlinePresentationIntent == nil }) {
+            let end = a.index(afterCharacter: colon)
+            a[a.startIndex..<end].font = .system(size: SB.fs(size), weight: .medium)
+            a[a.startIndex..<end].foregroundColor = SB.t1
+        }
+        return a
+    }
+    private func t(_ s: String, label: Bool = false) -> Text { Text(Self.inline(s, label: label, size: size)) }
+    var body: some View {
+        let doc = SidebarLogic.readme(md)
+        VStack(alignment: .leading, spacing: 0) {
+            if !doc.meta.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(doc.meta.enumerated()), id: \.offset) { _, m in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(m.key.lowercased()).foregroundColor(SB.t4).lineLimit(1).minimumScaleFactor(0.8).frame(width: SB.u(120), alignment: .leading)
+                            if let u = m.url, let url = URL(string: u) { Text(.init("[\(m.value)](\(url.absoluteString))")).foregroundColor(SB.busy) }
+                            else { t(m.value).foregroundColor(SB.t2) }
+                        }
+                        .font(base)
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+            ForEach(Array(doc.blocks.enumerated()), id: \.offset) { i, b in
+                block(b, first: i == 0 && doc.meta.isEmpty)
+            }
+        }
+        .font(base).lineSpacing(2.5)
+        .tint(SB.busy)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    @ViewBuilder private func block(_ b: SBReadmeBlock, first: Bool) -> some View {
+        switch b {
+        case .heading(let l, let s):
+            if l == 2 {
+                Text(s.uppercased()).font(.system(size: SB.fs(11), weight: .semibold)).tracking(1.4).foregroundColor(SB.t3)
+                    .padding(.top, first ? 0 : 18).padding(.bottom, 6)
+            } else {
+                Text(Self.inline(s, size: size)).font(.system(size: SB.fs(size), weight: .semibold)).foregroundColor(SB.t1)
+                    .padding(.top, first ? 0 : 11).padding(.bottom, 4)
+            }
+        case .item(let depth, let marker, let s):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(marker).foregroundColor(SB.t4).frame(width: marker == "\u{2022}" ? 10 : 20, alignment: .trailing)
+                t(s, label: true).foregroundColor(SB.t2).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, CGFloat(depth) * 14).padding(.bottom, 5)
+        case .text(let s):
+            t(s).foregroundColor(SB.t2).padding(.bottom, 7)
+        case .table(let rows):
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 3) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { ri, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, c in
+                            t(c).foregroundColor(ri == 0 ? SB.t4 : SB.t2)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 4).padding(.bottom, 4)
+        }
+    }
+}
 /// The unit's README, collapsed by default, under the other sections of a unit view (all styles).
 struct SBReadmeSection: View {
     @ObservedObject var store: SidebarStore
     let style: SidebarStyle
-    @Environment(\.sbMono) private var mono
     var body: some View {
         if let u = store.unit, let md = store.context?.readme, !md.isEmpty {
-            let section = SBSection(store: store, id: "readme:\(u)", title: "README", count: "", style: style) { content(md) }
+            let section = SBSection(store: store, id: "readme:\(u)", title: "README", count: "", style: style) { SBReadmeBody(md: md, style: style) }
             if style == .cards { section.padding(SB.u(20)).frame(maxWidth: .infinity, alignment: .leading).sbGlass(radius: SB.u(24)) }
             else if style == .command { section.padding(.top, SB.u(12)).padding(.horizontal, SB.u(10)) }
             else { section.padding(.top, SB.u(14)) }
         }
-    }
-    private func inline(_ s: String) -> Text {
-        let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return Text((try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s))
-    }
-    private func content(_ md: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(SidebarLogic.readme(md).enumerated()), id: \.offset) { _, b in
-                switch b {
-                case .heading(let l, let t):
-                    inline(t).font(.system(size: SB.fs(l <= 1 ? 15 : 13.5), weight: .semibold)).foregroundColor(SB.t1).padding(.top, 4)
-                case .bullet(let t):
-                    HStack(alignment: .firstTextBaseline, spacing: 8) { Text("\u{2022}").foregroundColor(SB.t4); inline(t).foregroundColor(SB.t2) }
-                        .font(.system(size: SB.fs(13)))
-                case .text(let t):
-                    inline(t).font(.system(size: SB.fs(13))).foregroundColor(SB.t2)
-                }
-            }
-        }
-        .tint(SB.busy)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 // MARK: - Shared rows

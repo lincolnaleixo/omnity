@@ -283,10 +283,25 @@ struct SidebarTests {
         #expect(snap.sessions[0].windows.map(\.unit) == ["longlifenutri", nil, nil])
     }
     @Test func readmeBlocks() {
-        let md = "# Title\n\nSome **bold** text with [a link](https://x.y).\n- one\n* two\n```\n# not a heading\n```\n## Sub\n#hashtag\n---\n"
-        #expect(SidebarLogic.readme(md) == [.heading(1, "Title"), .text("Some **bold** text with [a link](https://x.y)."),
-                                            .bullet("one"), .bullet("two"), .heading(2, "Sub"), .text("#hashtag")])
-        #expect(SidebarLogic.readme("").isEmpty)
+        let md = "# Title\n\nKind: Business\nDrive: https://drive.google.com/drive/folders/abc (Acme/)\nNotes: ~/notes/Acme/\nSite: https://acme.com/x\n\nSome **bold** text.\n- one\n  - nested\n* two\n1. first\n```\n# not a heading\n```\n### Sub\n#hashtag\n| A | B |\n| --- | ---: |\n| 1 | 2 |\n---\n"
+        let r = SidebarLogic.readme(md)
+        #expect(r.meta.map(\.key) == ["Drive", "Notes", "Site"])                       // Kind is in the header; the H1 is dropped
+        #expect(r.meta[0].value == "Acme" && r.meta[0].url == "https://drive.google.com/drive/folders/abc")
+        #expect(r.meta[1].value == "Acme" && r.meta[1].url == nil)
+        #expect(r.blocks == [.text("Some **bold** text."), .item(depth: 0, marker: "\u{2022}", text: "one"),
+                             .item(depth: 1, marker: "\u{2022}", text: "nested"), .item(depth: 0, marker: "\u{2022}", text: "two"),
+                             .item(depth: 0, marker: "1.", text: "first"), .heading(3, "Sub"), .text("#hashtag"),
+                             .table([["A", "B"], ["1", "2"]])])
+        #expect(SidebarLogic.readme("").blocks.isEmpty)
+        #expect(SidebarLogic.readme("# T\n## Goal\n").blocks == [.heading(2, "Goal")])
+    }
+    @Test func readmeInline() {
+        let a = SBReadmeBody.inline("Run `ls -a` at https://github.com/lincolnaleixo/omni-x/pull/1, see [docs](https://d.io).", label: false)
+        #expect(String(a.characters) == "Run `ls -a` at github.com, see docs.".replacingOccurrences(of: "`", with: ""))
+        #expect(a.runs.compactMap(\.link?.absoluteString).contains("https://github.com/lincolnaleixo/omni-x/pull/1"))
+        #expect(a.runs.compactMap(\.link?.absoluteString).contains("https://d.io"))
+        let l = SBReadmeBody.inline("What: own-brand supplements", label: true)
+        #expect(String(l.characters) == "What: own-brand supplements")
     }
     @Test @MainActor func readmeStartsCollapsedAndToggles() {
         let store = SidebarStore.shared

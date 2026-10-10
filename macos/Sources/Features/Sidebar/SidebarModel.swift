@@ -120,7 +120,19 @@ struct SBUnitContext: Codable, Equatable {
 }
 
 enum SBReadmeBlock: Equatable {
-    case heading(Int, String), bullet(String), text(String)
+    case heading(Int, String)
+    /// `marker` is "\u{2022}" or "1."; depth 0 is the top level.
+    case item(depth: Int, marker: String, text: String)
+    case text(String)
+    case table([[String]])
+}
+/// A README line `Key: value` before the first section (Drive, Notes, Site ...). `url` is set for Drive.
+struct SBReadmeMeta: Equatable {
+    var key: String, value: String, url: String?
+}
+struct SBReadme: Equatable {
+    var meta: [SBReadmeMeta] = []
+    var blocks: [SBReadmeBlock] = []
 }
 struct SBHistory: Equatable {
     var ai: Bool
@@ -282,24 +294,61 @@ enum SidebarStyle: String, CaseIterable, Equatable {
 // MARK: - Rules
 
 enum SidebarLogic {
-    /// A README as blocks: `#` headings, `-`/`*` bullets and text lines (inline markdown is left for the view). Blank lines,
-    /// front matter fences and code fences are dropped.
-    static func readme(_ md: String) -> [SBReadmeBlock] {
-        var out: [SBReadmeBlock] = [], fence = false
+    /// Metadata keys the panel header already shows.
+    static let readmeHeaderKeys: Set<String> = ["kind", "type", "goal", "stage", "blueprint", "metric"]
+    /// A README for the panel: the H1 and the header's metadata are dropped, other `Key: value` lines before the first
+    /// section become `meta` (Drive and Notes shortened), the rest are blocks. Code fences, `---` and blank lines are dropped.
+    static func readme(_ md: String) -> SBReadme {
+        var r = SBReadme(), fence = false, seenH1 = false, inHead = true, table: [[String]] = []
+        func flush() { if !table.isEmpty { r.blocks.append(.table(table)); table = [] } }
         for raw in md.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("```") { fence.toggle(); continue }
-            if fence || line.isEmpty || line == "---" { continue }
-            let hashes = line.prefix { $0 == "#" }.count
-            if (1...6).contains(hashes), line.dropFirst(hashes).first == " " {
-                out.append(.heading(hashes, String(line.dropFirst(hashes + 1)).trimmingCharacters(in: .whitespaces)))
-            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                out.append(.bullet(String(line.dropFirst(2))))
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") { fence.toggle(); continue }
+            if fence || trimmed.isEmpty || trimmed == "---" { continue }
+            if trimmed.hasPrefix("|") {
+                let cells = trimmed.split(separator: "|", omittingEmptySubsequences: false).dropFirst().dropLast()
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                if !cells.allSatisfy({ $0.allSatisfy { "-: ".contains($0) } }) { table.append(cells) }
+                continue
+            }
+            flush()
+            let hashes = trimmed.prefix { $0 == "#" }.count
+            if (1...6).contains(hashes), trimmed.dropFirst(hashes).first == " " {
+                let t = String(trimmed.dropFirst(hashes + 1)).trimmingCharacters(in: .whitespaces)
+                if hashes == 1, !seenH1 { seenH1 = true; continue }   // the panel header shows the title
+                if hashes >= 2 { inHead = false }
+                r.blocks.append(.heading(max(hashes, 2), t))
+                continue
+            }
+            let indent = raw.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                r.blocks.append(.item(depth: indent / 2, marker: "\u{2022}", text: String(trimmed.dropFirst(2))))
+            } else if let m = trimmed.range(of: #"^\d{1,2}\. "#, options: .regularExpression) {
+                r.blocks.append(.item(depth: indent / 2, marker: String(trimmed[..<m.upperBound]).trimmingCharacters(in: .whitespaces),
+                                      text: String(trimmed[m.upperBound...])))
+            } else if inHead, let m = trimmed.range(of: #"^[A-Z][A-Za-z ]{1,20}: +"#, options: .regularExpression) {
+                let key = String(trimmed[..<m.upperBound]).trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+                let value = String(trimmed[m.upperBound...])
+                if !readmeHeaderKeys.contains(key.lowercased()) { r.meta.append(readmeMeta(key, value)) }
             } else {
-                out.append(.text(line))
+                r.blocks.append(.text(trimmed))
             }
         }
-        return out
+        flush()
+        return r
+    }
+    /// Drive becomes a link labelled by its folder, Notes the last folder of its path; others keep their text.
+    static func readmeMeta(_ key: String, _ value: String) -> SBReadmeMeta {
+        if key == "Drive", let u = value.range(of: #"https?://\S+"#, options: .regularExpression) {
+            let label = value.range(of: #"\(([^)]*)\)"#, options: .regularExpression)
+                .map { String(value[$0]).dropFirst().dropLast().trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) } ?? ""
+            return SBReadmeMeta(key: key, value: label.isEmpty ? "Drive folder" : label, url: String(value[u]))
+        }
+        if key == "Notes" {
+            let last = value.split(separator: "/").last.map(String.init) ?? value
+            return SBReadmeMeta(key: key, value: last, url: nil)
+        }
+        return SBReadmeMeta(key: key, value: value, url: nil)
     }
     static let aliases = ["lln": "longlifenutri", "tfp": "the-furry-pack", "silas": "silas-mullins"]
 
