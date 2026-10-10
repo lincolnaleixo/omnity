@@ -58,7 +58,7 @@ private struct SBNowList: View {
     var body: some View {
         VStack(spacing: spacing) {
             ForEach(Array(store.nowItems.enumerated()), id: \.element.id) { i, n in
-                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, here: n.here, muted: n.stale, clearID: n.stale ? n.task.id : nil)
+                SBAgentRow(store: store, agent: n.agent, style: style, key: i < 9 ? i + 1 : nil, here: n.here, taskFirst: true, muted: n.stale, clearID: n.stale ? n.task.id : nil)
             }
         }
     }
