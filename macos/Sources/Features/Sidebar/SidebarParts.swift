@@ -551,6 +551,8 @@ struct SBAgentRow: View {
     var key: Int?
     /// The window this Omnity window shows: a "this window" tag and a tint.
     var here = false
+    /// A Now row: the task leads (up to 2 lines); the window, "this window" and the age are a small line under it.
+    var taskFirst = false
     /// A stale marker: grey dot and text.
     var muted = false
     /// A stale Now row: the task id whose `doing` marker the Clear button removes.
@@ -564,10 +566,23 @@ struct SBAgentRow: View {
         HStack(spacing: 10) {
             SBDot(color: muted ? SB.t4 : SB.stateColor(agent.state), size: compact ? 8 : 9, pulse: agent.state == "waiting")
             if let key { Text("\(key)").foregroundColor(SB.t4).frame(width: 14, alignment: .leading) }
+            if taskFirst {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(agent.query).foregroundColor(muted ? SB.t3 : SB.t1).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Text(agent.key)
+                        if here { Text("this window").foregroundColor(SB.busy) }
+                        Text("\u{00B7} " + (muted ? "stale" : agent.age))
+                    }
+                    .font(.system(size: SB.fs(11))).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
             Text(agent.key).fontWeight(.semibold).foregroundColor(muted ? SB.t3 : SB.t1).lineLimit(1).fixedSize()
             if here { Text("this window").font(.system(size: SB.fs(11))).foregroundColor(SB.busy).lineLimit(1).fixedSize() }
             Text(agent.query).foregroundColor(muted ? SB.t4 : SB.t2).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             Text(muted ? "stale" : agent.age).foregroundColor(muted ? SB.t4 : SB.t3).lineLimit(1)
+            }
             if let id = clearID { SBPillButton(title: "Clear") { store.clearDoing(id) } }
         }
         if let note = agent.note {
