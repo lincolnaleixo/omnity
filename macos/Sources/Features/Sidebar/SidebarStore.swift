@@ -333,7 +333,8 @@ final class SidebarStore: ObservableObject {
     /// Reads tasks, events and (when stale) units at the same time; the unit context starts at once beside them.
     /// The tmux snapshot is the switcher's own (it polls); nothing here asks for it again.
     func refresh() {
-        guard !refreshing else { refreshAgain = true; return }
+        // Omnity: a refresh older than 15 s is stuck; start a new one instead of waiting forever.
+        guard !refreshing || Date().timeIntervalSince(refreshedAt) > 15 else { refreshAgain = true; return }
         refreshing = true
         let began = Date()
         refreshedAt = began

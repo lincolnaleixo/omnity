@@ -24,6 +24,22 @@ struct WindowSwitcherTests {
         try JSONDecoder().decode(TmuxSnapshot.self, from: Data(Self.json.utf8))
     }
 
+    /// Omnity: Process.waitUntilExit() off the main thread froze the tab bar (2026-10-11); use terminationHandler.
+    @Test func noWaitUntilExitInOmnityFeatures() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Features")
+        var offenders: [String] = []
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            if text.contains("Omnity:"), text.contains(".waitUntilExit()") { offenders.append(url.lastPathComponent) }
+        }
+        #expect(offenders.isEmpty, "waitUntilExit() in \(offenders)")
+    }
+    @Test func runReturnsFromBackgroundQueue() async {
+        let data = await Task.detached { await TmuxSwitchClient.run(path: "/bin/echo", ["hi"]) }.value
+        #expect(data.map { String(decoding: $0, as: UTF8.self) } == "hi\n")
+    }
     @Test func decodes() throws {
         let s = try snapshot()
         #expect(s.current?.window == "@1")

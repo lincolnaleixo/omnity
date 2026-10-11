@@ -144,6 +144,7 @@ final class HostStats: ObservableObject {
     private var prev: HostStatsSample?
     private var diskCache = HostDiskCache()
     private var inFlight = false
+    private var inFlightSince = Date.distantPast   // Omnity: an in-flight read older than 15 s is stuck
 
     func install() {
         guard timer == nil else { return }
@@ -155,10 +156,12 @@ final class HostStats: ObservableObject {
 
     /// Reads once if Omnity is the active app and a tab bar is on screen.
     func tick() {
-        guard NSApp.isActive, SessionTabs.shared.bars > 0, !inFlight else { return }
+        guard NSApp.isActive, SessionTabs.shared.bars > 0,
+              !inFlight || Date().timeIntervalSince(inFlightSince) > 15 else { return }
         let host = SessionTabs.shared.host
         guard !host.isEmpty else { return }
         inFlight = true
+        inFlightSince = Date()
         let withDisk = diskCache.due(Date())
         Task {
             var out = await read(host: host, disk: withDisk)

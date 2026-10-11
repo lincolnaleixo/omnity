@@ -112,7 +112,7 @@ enum TmuxSwitchClient {
         let r = await run(path: "/usr/sbin/lsof", ["-a", "-n", "-P", "-p", String(pid), "-iTCP", "-Fn"])
         return r.flatMap { localPort(lsof: String(decoding: $0, as: UTF8.self)) }
     }
-    private static func run(path: String, _ args: [String]) async -> Data? {
+    static func run(path: String, _ args: [String]) async -> Data? {
         await withCheckedContinuation { cont in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: path)
@@ -121,10 +121,16 @@ enum TmuxSwitchClient {
             p.standardOutput = out
             p.standardError = FileHandle.nullDevice
             p.standardInput = FileHandle.nullDevice
+            // Omnity: never waitUntilExit() off the main thread (it can spin a run loop that never sees the exit).
+            let done = DispatchSemaphore(value: 0)
+            p.terminationHandler = { _ in done.signal() }
             do { try p.run() } catch { cont.resume(returning: nil); return }
             DispatchQueue.global(qos: .userInitiated).async {
+                let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 8, execute: killer)
                 let data = out.fileHandleForReading.readDataToEndOfFile()
-                p.waitUntilExit()
+                done.wait()
+                killer.cancel()
                 cont.resume(returning: data)
             }
         }
@@ -169,6 +175,9 @@ enum TmuxSwitchClient {
             let err = Pipe()
             p.standardError = err
             p.standardInput = FileHandle.nullDevice
+            // Omnity: terminationHandler + semaphore, never waitUntilExit() off the main thread.
+            let done = DispatchSemaphore(value: 0)
+            p.terminationHandler = { _ in done.signal() }
             do { try p.run() } catch { cont.resume(returning: nil); return }
             DispatchQueue.global(qos: .userInitiated).async {
                 // A hung connection must not pile up processes.
@@ -176,7 +185,7 @@ enum TmuxSwitchClient {
                 DispatchQueue.global().asyncAfter(deadline: .now() + 8, execute: killer)
                 let data = out.fileHandleForReading.readDataToEndOfFile()
                 let errData = err.fileHandleForReading.readDataToEndOfFile()
-                p.waitUntilExit()
+                done.wait()
                 killer.cancel()
                 cont.resume(returning: Result(
                     status: p.terminationStatus, out: data, err: String(decoding: errData, as: UTF8.self)))
@@ -221,6 +230,8 @@ final class WindowSwitcher: ObservableObject {
     private var heldTimer: Timer?
     private var lastRefresh = Date.distantPast
     private var refreshing = false
+    /// Omnity: when the current refresh began; a refresh older than 15 s is treated as stuck and may be replaced.
+    private var refreshStarted = Date.distantPast
 
     var entries: [SwitcherEntry] { WindowSwitcherModel.entries(sessions) }
 
@@ -383,8 +394,9 @@ final class WindowSwitcher: ObservableObject {
 
     func refresh(force: Bool = false) {
         let host = self.host
-        guard !host.isEmpty, force || !refreshing else { return }
+        guard !host.isEmpty, force || !refreshing || Date().timeIntervalSince(refreshStarted) > 15 else { return }
         refreshing = true
+        refreshStarted = Date()
         let pid = MainActor.assumeIsolated { SessionTabs.shared.keyForegroundPID() }
         Task {
             // Omnity: follow the window shown in the key Omnity window (its ssh connection), then read the snapshot.

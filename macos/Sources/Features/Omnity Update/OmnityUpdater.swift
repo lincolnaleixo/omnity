@@ -133,8 +133,11 @@ final class OmnityUpdater: ObservableObject {
         process.arguments = args
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        // Omnity: terminationHandler + semaphore, never waitUntilExit() (can hang off the main thread).
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
         try process.run()
-        process.waitUntilExit()
+        done.wait()
         guard process.terminationStatus == 0 else {
             throw UpdateError("\((path as NSString).lastPathComponent) exited with \(process.terminationStatus)")
         }

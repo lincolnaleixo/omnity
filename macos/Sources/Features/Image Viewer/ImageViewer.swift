@@ -102,6 +102,9 @@ enum ImageViewer {
                 process.standardOutput = stdout
                 process.standardError = stderr
                 process.standardInput = FileHandle.nullDevice
+                // Omnity: terminationHandler + semaphore, never waitUntilExit() off the main thread.
+                let done = DispatchSemaphore(value: 0)
+                process.terminationHandler = { _ in done.signal() }
                 do {
                     try process.run()
                 } catch {
@@ -110,7 +113,7 @@ enum ImageViewer {
                 }
                 let data = stdout.fileHandleForReading.readDataToEndOfFile()
                 let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
+                done.wait()
                 if process.terminationStatus == 0, let image = NSImage(data: data) {
                     cont.resume(returning: .success(image))
                     return

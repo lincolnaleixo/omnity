@@ -39,6 +39,7 @@ Lincoln's fork of Ghostty. Branch `feat/remote-drop` adds:
   on screen as if it were current.
 - Lesson: a local event monitor returns `OmnityMonitor.run(self, event) { $0.handle($1) }`, never `handle(event) ?? event`
   (that turns a swallowed key back into the event: tmux got option+digit as well as Omnity's `--go`).
+- Lesson: never `Process.waitUntilExit()` off the main thread (it spins a run loop that may never see the exit; on 2026-10-11 it froze the session tab bar on an old snapshot); use `terminationHandler` + a semaphore, and every in-flight flag needs an age limit (15 s). Gate: `WindowSwitcherTests.noWaitUntilExitInOmnityFeatures`.
 - Option+digit belongs to tmux (M-1...9); the sidebar jumps to Now row N with control+option+N.
 - Which unit a window belongs to comes from the host: `tmux-switch --json` adds `unit` to each window (folder named like the
   window, else `~/.config/omni/window-units`, the rule of `session-unit`); the hard-coded aliases serve old snapshots only.
